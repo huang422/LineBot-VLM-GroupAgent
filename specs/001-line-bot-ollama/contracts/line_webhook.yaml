@@ -1,0 +1,283 @@
+openapi: 3.0.3
+info:
+  title: LINE Bot Webhook API
+  description: |
+    Contract specification for LINE Messaging API webhook integration.
+    This contract defines how LINE Platform sends events to our bot server.
+  version: 1.0.0
+  contact:
+    name: LINE Bot Team
+
+servers:
+  - url: https://linebot.example.com
+    description: Production server (via Cloudflare Tunnel)
+  - url: http://localhost:8000
+    description: Local development server
+
+security:
+  - LineSignature: []
+
+paths:
+  /webhook:
+    post:
+      summary: Receive webhook events from LINE Platform
+      description: |
+        LINE sends webhook events for messages, follows, joins, etc.
+        Server MUST respond with HTTP 200 within 15 seconds.
+        Request signature MUST be validated using X-Line-Signature header.
+      operationId: handleWebhook
+
+      parameters:
+        - name: X-Line-Signature
+          in: header
+          required: true
+          schema:
+            type: string
+          description: HMAC-SHA256 signature for request body validation
+          example: "2eUyV7/qJ7z4m5k6..."
+
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/WebhookRequest'
+            examples:
+              textMessage:
+                summary: Text message with !hej command
+                value:
+                  destination: "U1234567890abcdef1234567890abcdef"
+                  events:
+                    - type: "message"
+                      message:
+                        type: "text"
+                        id: "325708"
+                        text: "!hej What is the capital of France?"
+                      timestamp: 1462629479859
+                      source:
+                        type: "group"
+                        groupId: "Ca56f94637c..."
+                        userId: "U4af4980629..."
+                      replyToken: "b60d432864f44d079f6d8efe86cf404b"
+                      mode: "active"
+
+              replyWithQuote:
+                summary: Reply to message with quoted content
+                value:
+                  destination: "U1234567890abcdef1234567890abcdef"
+                  events:
+                    - type: "message"
+                      message:
+                        type: "text"
+                        id: "325709"
+                        text: "!hej What's in this image?"
+                        quotedMessageId: "325700"
+                      timestamp: 1462629480000
+                      source:
+                        type: "group"
+                        groupId: "Ca56f94637c..."
+                        userId: "U4af4980629..."
+                      replyToken: "c70e543975g55e180g7e9fgf97dg515c"
+                      mode: "active"
+
+              imageMessage:
+                summary: Image message (for future enhancement)
+                value:
+                  destination: "U1234567890abcdef1234567890abcdef"
+                  events:
+                    - type: "message"
+                      message:
+                        type: "image"
+                        id: "325710"
+                        contentProvider:
+                          type: "line"
+                      timestamp: 1462629481000
+                      source:
+                        type: "group"
+                        groupId: "Ca56f94637c..."
+                        userId: "U4af4980629..."
+                      replyToken: "d81f654086h66f291h8fAhgh08eh626d"
+                      mode: "active"
+
+      responses:
+        '200':
+          description: |
+            Webhook received successfully.
+            CRITICAL: Server must return this within 15 seconds.
+            LLM processing happens in background tasks.
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  status:
+                    type: string
+                    enum: [ok]
+              example:
+                status: "ok"
+
+        '400':
+          description: Invalid request body or malformed JSON
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+              example:
+                error: "Invalid JSON payload"
+
+        '403':
+          description: Signature validation failed (security violation)
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+              example:
+                error: "Invalid signature"
+
+components:
+  securitySchemes:
+    LineSignature:
+      type: apiKey
+      in: header
+      name: X-Line-Signature
+      description: |
+        HMAC-SHA256 signature of request body.
+        Calculated as: HMAC-SHA256(channel_secret, request_body)
+        MUST be validated on every request (FR-039).
+
+  schemas:
+    WebhookRequest:
+      type: object
+      required:
+        - destination
+        - events
+      properties:
+        destination:
+          type: string
+          description: Bot's user ID (channel ID)
+          example: "U1234567890abcdef1234567890abcdef"
+        events:
+          type: array
+          description: Array of webhook events (typically 1 event per request)
+          items:
+            $ref: '#/components/schemas/Event'
+          minItems: 1
+          maxItems: 1
+
+    Event:
+      type: object
+      required:
+        - type
+        - timestamp
+        - source
+        - mode
+      properties:
+        type:
+          type: string
+          enum: [message, follow, join, leave, postback]
+          description: Event type (only 'message' handled in MVP)
+        timestamp:
+          type: integer
+          format: int64
+          description: Unix timestamp in milliseconds
+          example: 1462629479859
+        source:
+          $ref: '#/components/schemas/Source'
+        replyToken:
+          type: string
+          description: Token for replying (valid for 60 seconds)
+          example: "b60d432864f44d079f6d8efe86cf404b"
+        mode:
+          type: string
+          enum: [active, standby]
+          description: Chat mode (active = can respond)
+        message:
+          $ref: '#/components/schemas/Message'
+
+    Source:
+      type: object
+      required:
+        - type
+      properties:
+        type:
+          type: string
+          enum: [user, group, room]
+        userId:
+          type: string
+          description: User ID who sent the message
+          pattern: '^U[a-f0-9]{32}$'
+          example: "U4af4980629..."
+        groupId:
+          type: string
+          description: Group ID (present when type=group)
+          pattern: '^C[a-f0-9]{32}$'
+          example: "Ca56f94637c..."
+
+    Message:
+      type: object
+      required:
+        - type
+        - id
+      properties:
+        type:
+          type: string
+          enum: [text, image, video, audio, file, location, sticker]
+        id:
+          type: string
+          description: Message ID (used to download image content)
+          example: "325708"
+        text:
+          type: string
+          description: Message text (present when type=text)
+          example: "!hej What is the capital of France?"
+        quotedMessageId:
+          type: string
+          description: ID of quoted message (if user replied to another message)
+          example: "325700"
+        contentProvider:
+          type: object
+          description: Image/video content provider info
+          properties:
+            type:
+              type: string
+              enum: [line, external]
+
+    Error:
+      type: object
+      required:
+        - error
+      properties:
+        error:
+          type: string
+          description: Error message
+          example: "Invalid signature"
+        details:
+          type: string
+          description: Additional error context (optional)
+
+# Security validation pseudocode
+#
+# def validate_signature(body: bytes, signature: str) -> bool:
+#     """Validate LINE webhook signature using constant-time comparison"""
+#     import hmac
+#     import hashlib
+#
+#     channel_secret = os.getenv('LINE_CHANNEL_SECRET').encode('utf-8')
+#     hash = hmac.new(channel_secret, body, hashlib.sha256).digest()
+#     computed_signature = base64.b64encode(hash).decode('utf-8')
+#
+#     # Use constant-time comparison to prevent timing attacks
+#     return hmac.compare_digest(signature, computed_signature)
+#
+# Example usage in FastAPI:
+#
+# @app.post("/webhook")
+# async def webhook(request: Request):
+#     signature = request.headers.get('X-Line-Signature')
+#     body = await request.body()
+#
+#     if not validate_signature(body, signature):
+#         raise HTTPException(status_code=403, detail="Invalid signature")
+#
+#     # Process webhook...
+#     return {"status": "ok"}
