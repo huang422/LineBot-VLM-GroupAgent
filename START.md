@@ -34,6 +34,10 @@ docker compose up -d
 
 # 2. 檢查服務狀態
 docker compose ps
+
+docker compose down && docker compose up -d
+docker compose down && docker compose up -d --build
+docker logs cloudflared 2>&1 | grep -o 'https://[a-zA-Z0-9-]*\.trycloudflare\.com' | head -1
 ```
 
 應該看到三個服務都在運行：
@@ -77,6 +81,29 @@ docker logs cloudflared 2>&1 | grep -o 'https://[a-zA-Z0-9-]*\.trycloudflare\.co
 ```
 
 **重要：每次重啟 Cloudflare Tunnel，URL 可能會改變！**
+
+### ⚠️ 重要：設定 PUBLIC_BASE_URL（!img 指令必需）
+
+如果要使用 `!img` 指令發送圖片，必須設定 `PUBLIC_BASE_URL`：
+
+```bash
+# 1. 獲取 Cloudflare Tunnel URL
+TUNNEL_URL=$(docker logs cloudflared 2>&1 | grep -o 'https://[a-zA-Z0-9-]*\.trycloudflare\.com' | head -1)
+
+# 2. 在 .env 文件中設定 PUBLIC_BASE_URL
+echo "PUBLIC_BASE_URL=$TUNNEL_URL" >> .env
+
+# 3. 重啟服務讓設定生效
+docker compose restart linebot
+```
+
+或者手動編輯 `.env` 文件，將獲取到的 URL 設定為 `PUBLIC_BASE_URL`：
+
+```bash
+PUBLIC_BASE_URL=https://xxxxx-xxxxx-1234.trycloudflare.com
+```
+
+**注意：** Cloudflare Tunnel URL 改變時，需要重新設定 PUBLIC_BASE_URL
 
 ---
 
@@ -379,6 +406,43 @@ docker compose logs -f linebot
 # 測試 Ollama 是否正常
 docker compose exec ollama ollama run gemma3:4b "測試"
 ```
+
+### Q9: !img 指令無法發送圖片？
+
+**症狀：** 使用 `!img 關鍵字` 後，收到「找到圖片」的訊息但沒有實際收到圖片
+
+**原因：** 沒有設定 `PUBLIC_BASE_URL`，LINE 無法透過 HTTPS URL 下載圖片
+
+**解決方法：**
+
+1. **獲取 Cloudflare Tunnel URL**
+   ```bash
+   docker logs cloudflared 2>&1 | grep -o 'https://[a-zA-Z0-9-]*\.trycloudflare\.com' | head -1
+   ```
+
+2. **在 .env 中設定 PUBLIC_BASE_URL**
+   ```bash
+   # 編輯 .env 文件
+   nano .env
+
+   # 加入或更新這一行（替換成你的 Tunnel URL）
+   PUBLIC_BASE_URL=https://xxxxx-xxxxx-1234.trycloudflare.com
+   ```
+
+3. **重啟服務**
+   ```bash
+   docker compose restart linebot
+   ```
+
+4. **驗證設定**
+   ```bash
+   # 查看日誌確認 PUBLIC_BASE_URL 被讀取
+   docker compose logs linebot | grep "PUBLIC_BASE_URL"
+   ```
+
+**提示：**
+- 每次重啟 Cloudflare Tunnel 後，URL 可能改變，需要重新設定
+- 使用永久 Tunnel 可以避免這個問題（參考進階設定）
 
 ---
 

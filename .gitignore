@@ -96,3 +96,5 @@ logs/
 # Spec documentation temp files
 # =============================================================================
 prompt.md
+doc/system_prompt.md
+doc/image_map.json

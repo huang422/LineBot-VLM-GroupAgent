@@ -142,6 +142,10 @@ class Settings(BaseSettings):
     host: str = Field(default="0.0.0.0", description="Server host")
     port: int = Field(default=8000, ge=1, le=65535, description="Server port")
     log_level: str = Field(default="INFO", description="Logging level")
+    public_base_url: Optional[str] = Field(
+        default=None,
+        description="Public HTTPS URL for the server (e.g., Cloudflare Tunnel URL)"
+    )
     
     @field_validator("log_level")
     @classmethod

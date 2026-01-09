@@ -220,17 +220,17 @@ class LineService:
         reply_token: str,
         original_url: str,
         preview_url: Optional[str] = None,
-    ) -> bool:
+    ) -> tuple[bool, Optional[str], str]:
         """
         Send an image reply using URLs.
-        
+
         Args:
             reply_token: LINE reply token
             original_url: Full-size image URL (HTTPS required)
             preview_url: Preview image URL (optional, uses original if not provided)
-            
+
         Returns:
-            True if successful
+            Tuple of (success: bool, message_id: Optional[str], image_url: str)
         """
         payload = {
             "replyToken": reply_token,
@@ -242,16 +242,27 @@ class LineService:
                 }
             ],
         }
-        
+
         try:
             response = await self.client.post(
                 f"{LINE_API_BASE}/bot/message/reply",
                 json=payload,
             )
-            return response.status_code == 200
+
+            if response.status_code == 200:
+                logger.debug("Image reply sent successfully")
+                # Extract message ID from response if available
+                response_data = response.json()
+                sent_messages = response_data.get("sentMessages", [])
+                message_id = sent_messages[0]["id"] if sent_messages else None
+                return (True, message_id, original_url)
+            else:
+                error_body = response.text[:200]
+                logger.error(f"Image reply failed: {response.status_code} - {error_body}")
+                return (False, None, original_url)
         except Exception as e:
             logger.error(f"Image reply error: {e}")
-            return False
+            return (False, None, original_url)
     
     async def get_message_content(self, message_id: str) -> Optional[BytesIO]:
         """

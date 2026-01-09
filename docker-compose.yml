@@ -10,9 +10,11 @@ services:
       - .env
     volumes:
       # 掛載服務帳號金鑰（如果使用 Google Drive）
-      - ./credentials:/app/credentials:ro
+      - ./credentials.json:/app/credentials.json:ro
       # 快取目錄
       - linebot_cache:/tmp/linebot_cache
+      # 臨時圖片目錄（用於 !img 指令）
+      - linebot_images:/tmp/linebot_images
     depends_on:
       - ollama
     networks:
@@ -54,6 +56,8 @@ volumes:
   ollama_data:
     driver: local
   linebot_cache:
+    driver: local
+  linebot_images:
     driver: local
 
 networks:

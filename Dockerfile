@@ -34,8 +34,9 @@ COPY main.py .
 RUN adduser --disabled-password --gecos '' appuser && \
     chown -R appuser:appuser /app
 
-# Create cache directory
-RUN mkdir -p /tmp/linebot_cache && chown appuser:appuser /tmp/linebot_cache
+# Create cache and image directories with proper permissions
+RUN mkdir -p /tmp/linebot_cache /tmp/linebot_images && \
+    chown appuser:appuser /tmp/linebot_cache /tmp/linebot_images
 
 # Switch to non-root user
 USER appuser

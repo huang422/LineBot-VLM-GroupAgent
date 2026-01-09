@@ -98,6 +98,7 @@ async def handle_hej_command(
         # Get quoted message content from cache if replying
         context_text = None
         quoted_image_message_id = None
+        quoted_image_url = None
 
         if command.quoted_message_id:
             cached_msg = get_cached_message(command.quoted_message_id)
@@ -106,8 +107,14 @@ async def handle_hej_command(
                     context_text = cached_msg["text"]
                     logger.info(f"Retrieved quoted text from cache: {context_text[:50]}...")
                 elif cached_msg["type"] == "image":
-                    quoted_image_message_id = command.quoted_message_id
-                    logger.info("Quoted message is an image, will download later")
+                    # Check if this is a bot-sent image with URL in cache
+                    if cached_msg.get("image_url"):
+                        quoted_image_url = cached_msg["image_url"]
+                        logger.info(f"Retrieved bot-sent image URL from cache: {quoted_image_url}")
+                    else:
+                        # User-sent image, need to download from LINE
+                        quoted_image_message_id = command.quoted_message_id
+                        logger.info("Quoted message is a user-sent image, will download from LINE")
             else:
                 logger.warning(f"Quoted message {command.quoted_message_id} not found in cache")
 
@@ -122,9 +129,11 @@ async def handle_hej_command(
             # Note: context_image_base64 will be populated by the processor if needed
         )
 
-        # Store quoted image message ID for later processing
+        # Store quoted image info for later processing
         if quoted_image_message_id:
             request._quoted_image_message_id = quoted_image_message_id
+        if quoted_image_url:
+            request._quoted_image_url = quoted_image_url
         
         # Try to enqueue
         position = queue_service.try_enqueue_nowait(request)

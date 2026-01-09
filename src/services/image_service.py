@@ -9,10 +9,16 @@ from io import BytesIO
 import base64
 from typing import Optional, Tuple
 from PIL import Image
+try:
+    import pillow_heif
+    pillow_heif.register_heif_opener()
+except ImportError:
+    pass  # Allow running without heic support if dependency missing
 
 from src.services.line_service import get_line_service
 from src.utils.logger import get_logger
 from src.utils.validators import validate_image_content_type
+import httpx
 
 logger = get_logger("services.image")
 
@@ -31,6 +37,7 @@ class ImageProcessingError(Exception):
 async def download_and_process_image(
     message_id: str,
     max_dimension: int = MAX_IMAGE_DIMENSION,
+    image_url: Optional[str] = None,
 ) -> Optional[str]:
     """
     Download image from LINE and process for LLM.
@@ -41,6 +48,7 @@ async def download_and_process_image(
     Args:
         message_id: LINE message ID containing the image
         max_dimension: Maximum dimension before resizing
+        image_url: Optional direct URL to download image from (skips LINE API)
         
     Returns:
         Base64-encoded image string, or None if failed
@@ -48,8 +56,23 @@ async def download_and_process_image(
     line_service = get_line_service()
     
     try:
-        # Download image content
-        content, content_type = await line_service.get_message_content_with_type(message_id)
+        content = None
+        content_type = None
+
+        if image_url:
+            # Download directly from URL (for bot-sent images)
+            logger.debug(f"Downloading image from URL: {image_url}")
+            async with httpx.AsyncClient() as client:
+                response = await client.get(image_url, timeout=30.0)
+                if response.status_code == 200:
+                    content = BytesIO(response.content)
+                    content_type = response.headers.get("content-type")
+                else:
+                    logger.error(f"Failed to download image from URL: {response.status_code}")
+                    return None
+        else:
+            # Download image content from LINE API
+            content, content_type = await line_service.get_message_content_with_type(message_id)
         
         if content is None:
             logger.error(f"Failed to download image: {message_id}")
@@ -197,3 +220,42 @@ def estimate_base64_size(image_bytes: BytesIO) -> int:
     raw_size = len(image_bytes.read())
     # Base64 encoding increases size by ~33%
     return int(raw_size * 1.37)
+
+
+def convert_to_jpeg(
+    image_bytes: bytes,
+    max_dimension: Optional[int] = None,  # None = keep original size
+) -> Optional[bytes]:
+    """
+    Convert image bytes (any format including HEIC) to JPEG bytes.
+    Optionally resizes if max_dimension is provided.
+    
+    Args:
+        image_bytes: Raw image data
+        max_dimension: Maximum dimension (longest side), or None
+        
+    Returns:
+        JPEG image bytes, or None if conversion failed
+    """
+    try:
+        # Load into memory
+        io = BytesIO(image_bytes)
+        
+        # Open with PIL (handles HEIC if pillow-heif is registered)
+        with Image.open(io) as img:
+            # Convert to RGB (handles RGBA, P, etc.)
+            if img.mode != "RGB":
+                img = img.convert("RGB")
+            
+            # Resize if needed
+            if max_dimension:
+                img = resize_image(img, max_dimension)
+            
+            # Save as JPEG
+            output = BytesIO()
+            img.save(output, format="JPEG", quality=85, optimize=True)
+            return output.getvalue()
+            
+    except Exception as e:
+        logger.error(f"Image conversion failed: {e}")
+        return None

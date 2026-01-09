@@ -15,7 +15,12 @@ _MAX_CACHE_SIZE = 100  # Keep last 100 messages
 _CACHE_TTL_SECONDS = 3600  # 1 hour
 
 
-def cache_message(message_id: str, message_type: str, text: Optional[str] = None) -> None:
+def cache_message(
+    message_id: str,
+    message_type: str,
+    text: Optional[str] = None,
+    image_url: Optional[str] = None
+) -> None:
     """
     Cache a message for later retrieval in quote feature.
 
@@ -23,10 +28,12 @@ def cache_message(message_id: str, message_type: str, text: Optional[str] = None
         message_id: LINE message ID
         message_type: Message type (text, image, etc.)
         text: Message text content (only for text messages)
+        image_url: Image URL (for image messages sent by bot)
     """
     _message_cache[message_id] = {
         "type": message_type,
         "text": text,
+        "image_url": image_url,
         "timestamp": time.time(),
     }
 

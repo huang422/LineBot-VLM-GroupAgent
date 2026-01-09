@@ -13,7 +13,9 @@ from contextlib import asynccontextmanager
 from typing import Dict, Any
 
 from fastapi import FastAPI, Request, HTTPException, Header
-from fastapi.responses import JSONResponse
+from fastapi.responses import JSONResponse, FileResponse
+from fastapi.staticfiles import StaticFiles
+from pathlib import Path
 
 from src.config import get_settings, Settings
 from src.utils.logger import setup_logging, get_logger, LogContext
@@ -68,14 +70,41 @@ async def process_llm_request(request: LLMRequest) -> None:
         # Check if we need to download an image for multimodal request
         image_base64 = request.context_image_base64
         
-        # Handle quoted image message (stored during enqueueing)
-        if hasattr(request, "_quoted_image_message_id") and request._quoted_image_message_id:
-            logger.debug(f"Downloading quoted image: {request._quoted_image_message_id}")
+        # Handle quoted image
+        # Scenario 1: Bot-sent image (URL cached)
+        if hasattr(request, "_quoted_image_url") and request._quoted_image_url:
+            logger.debug(f"Loading bot-sent image from URL: {request._quoted_image_url}")
+            try:
+                # Download image from our own server
+                import httpx
+                from io import BytesIO
+                from src.services.image_service import process_image_bytes
+
+                async with httpx.AsyncClient() as client:
+                    response = await client.get(
+                        request._quoted_image_url, 
+                        timeout=30.0,
+                        follow_redirects=True
+                    )
+                    if response.status_code == 200:
+                        # Process the image
+                        image_io = BytesIO(response.content)
+                        image_base64 = process_image_bytes(image_io)
+                        logger.info("Bot-sent image loaded and processed successfully")
+                    else:
+                        logger.warning(f"Failed to load bot-sent image: HTTP {response.status_code}")
+            except Exception as e:
+                logger.error(f"Error loading bot-sent image: {e}", exc_info=True)
+        
+        # Scenario 2: User-sent image (Download from LINE)
+        elif hasattr(request, "_quoted_image_message_id") and request._quoted_image_message_id:
+            logger.debug(f"Downloading quoted user image: {request._quoted_image_message_id}")
+            # Use original download logic for user images
             image_base64 = await download_and_process_image(request._quoted_image_message_id)
             if image_base64:
-                logger.info("Image downloaded and processed successfully")
+                logger.info("User quoted image downloaded and processed successfully")
             else:
-                logger.warning("Failed to download quoted image, proceeding with text only")
+                logger.warning("Failed to download quoted user image")
         
         # Call Ollama for inference
         response_text = await ollama_service.generate(
@@ -218,6 +247,13 @@ app = FastAPI(
     lifespan=lifespan,
 )
 
+# Setup temporary image directory for serving images via HTTPS
+TEMP_IMAGE_DIR = Path("/tmp/linebot_images")
+TEMP_IMAGE_DIR.mkdir(parents=True, exist_ok=True)
+
+# Mount static files for serving images
+app.mount("/images", StaticFiles(directory=str(TEMP_IMAGE_DIR)), name="images")
+
 
 @app.get("/")
 async def root():
@@ -353,7 +389,7 @@ async def handle_webhook_event(event: Dict[str, Any]) -> None:
         user_id=context.get("user_id"),
         command=command.command_type.value,
     ):
-        # Route to appropriate handler
+        # Route to appropriate handler!img 騎哈雷
         if command.command_type == CommandType.HEJ:
             await handle_hej_command(command, event)
         

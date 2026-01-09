@@ -18,6 +18,90 @@ KEYWORD_PATTERN = re.compile(r'^[\w\u4e00-\u9fff\u3400-\u4dbf\-_]+$', re.UNICODE
 # Valid image extensions
 VALID_IMAGE_EXTENSIONS = {'.png', '.jpg', '.jpeg', '.webp', '.gif'}
 
+# Pattern to extract file_id from Google Drive URLs
+DRIVE_FILE_URL_PATTERN = re.compile(
+    r'https://drive\.google\.com/file/d/([a-zA-Z0-9_-]+)',
+    re.IGNORECASE
+)
+
+# Pattern to extract folder_id from Google Drive URLs
+DRIVE_FOLDER_URL_PATTERN = re.compile(
+    r'https://drive\.google\.com/drive/folders/([a-zA-Z0-9_-]+)',
+    re.IGNORECASE
+)
+
+
+def extract_drive_file_id(file_id_or_url: str) -> str:
+    """
+    Extract file ID from Google Drive URL or return as-is if already an ID.
+
+    Supports formats:
+    - https://drive.google.com/file/d/FILE_ID/view?usp=drive_link
+    - https://drive.google.com/file/d/FILE_ID/view
+    - FILE_ID (direct ID)
+
+    Args:
+        file_id_or_url: Google Drive file ID or URL
+
+    Returns:
+        Extracted file ID
+
+    Raises:
+        ValueError: If URL format is invalid
+    """
+    if not file_id_or_url:
+        raise ValueError("file_id cannot be empty")
+
+    # Check if it's a URL
+    if file_id_or_url.startswith('http'):
+        match = DRIVE_FILE_URL_PATTERN.search(file_id_or_url)
+        if match:
+            return match.group(1)
+        else:
+            raise ValueError(
+                f"Invalid Google Drive URL format: {file_id_or_url}. "
+                "Expected format: https://drive.google.com/file/d/FILE_ID/..."
+            )
+
+    # Assume it's already a file ID
+    return file_id_or_url
+
+
+def extract_drive_folder_id(folder_id_or_url: str) -> str:
+    """
+    Extract folder ID from Google Drive URL or return as-is if already an ID.
+
+    Supports formats:
+    - https://drive.google.com/drive/folders/FOLDER_ID?usp=drive_link
+    - https://drive.google.com/drive/folders/FOLDER_ID
+    - FOLDER_ID (direct ID)
+
+    Args:
+        folder_id_or_url: Google Drive folder ID or URL
+
+    Returns:
+        Extracted folder ID
+
+    Raises:
+        ValueError: If URL format is invalid
+    """
+    if not folder_id_or_url:
+        raise ValueError("folder_id cannot be empty")
+
+    # Check if it's a URL
+    if folder_id_or_url.startswith('http'):
+        match = DRIVE_FOLDER_URL_PATTERN.search(folder_id_or_url)
+        if match:
+            return match.group(1)
+        else:
+            raise ValueError(
+                f"Invalid Google Drive URL format: {folder_id_or_url}. "
+                "Expected format: https://drive.google.com/drive/folders/FOLDER_ID/..."
+            )
+
+    # Assume it's already a folder ID
+    return folder_id_or_url
+
 
 @dataclass
 class ImageMapping:
@@ -37,9 +121,11 @@ class ImageMapping:
     file_id: str
     cached_path: Optional[str] = None
     md5_checksum: Optional[str] = None
-    
+
     def __post_init__(self):
-        """Validate fields after initialization."""
+        """Validate fields after initialization and extract file_id from URL if needed."""
+        # Extract file_id from URL if a URL was provided
+        self.file_id = extract_drive_file_id(self.file_id)
         self.validate()
     
     def validate(self) -> None:
