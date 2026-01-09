@@ -1,0 +1,377 @@
+"""
+LINE Bot with Local Ollama VLM Integration - Main Application.
+
+FastAPI application with:
+- LINE webhook endpoint
+- Health check endpoint
+- Background queue worker
+- Startup/shutdown lifecycle management
+"""
+
+import asyncio
+from contextlib import asynccontextmanager
+from typing import Dict, Any
+
+from fastapi import FastAPI, Request, HTTPException, Header
+from fastapi.responses import JSONResponse
+
+from src.config import get_settings, Settings
+from src.utils.logger import setup_logging, get_logger, LogContext
+from src.utils.validators import validate_line_signature
+
+# Services
+from src.services.line_service import get_line_service, close_line_service
+from src.services.ollama_service import get_ollama_service, close_ollama_service
+from src.services.queue_service import get_queue_service
+from src.services.rate_limit_service import get_rate_limit_service
+from src.services.image_service import download_and_process_image
+from src.services.drive_service import get_drive_service, close_drive_service
+
+# Handlers
+from src.handlers.command_handler import (
+    parse_webhook_message,
+    extract_event_context,
+    CommandType,
+)
+from src.handlers.hej_handler import handle_hej_command
+from src.handlers.reload_handler import handle_reload_command
+from src.handlers.img_handler import handle_img_command
+
+# Models
+from src.models.llm_request import LLMRequest
+
+from src.services.message_cache_service import cache_message
+
+logger = get_logger("main")
+
+
+async def process_llm_request(request: LLMRequest) -> None:
+    """
+    Process a queued LLM request.
+    
+    This is the callback registered with the queue service worker.
+    Handles the actual Ollama inference and LINE response.
+    """
+    line_service = get_line_service()
+    ollama_service = get_ollama_service()
+    
+    logger.info(
+        f"Processing LLM request",
+        extra={
+            "request_id": request.request_id,
+            "user_id": request.user_id,
+            "has_image": request.is_multimodal,
+        }
+    )
+    
+    try:
+        # Check if we need to download an image for multimodal request
+        image_base64 = request.context_image_base64
+        
+        # Handle quoted image message (stored during enqueueing)
+        if hasattr(request, "_quoted_image_message_id") and request._quoted_image_message_id:
+            logger.debug(f"Downloading quoted image: {request._quoted_image_message_id}")
+            image_base64 = await download_and_process_image(request._quoted_image_message_id)
+            if image_base64:
+                logger.info("Image downloaded and processed successfully")
+            else:
+                logger.warning("Failed to download quoted image, proceeding with text only")
+        
+        # Call Ollama for inference
+        response_text = await ollama_service.generate(
+            prompt=request.prompt,
+            system_prompt=request.system_prompt,
+            image_base64=image_base64,
+            context_text=request.context_text,
+        )
+
+        # Try to use reply_token first (valid for ~60s), fallback to push message
+        success = False
+        if request.reply_token:
+            # Try reply first (faster and doesn't count against rate limits)
+            success, sent_message_id, sent_text = await line_service.reply_text(
+                reply_token=request.reply_token,
+                text=response_text,
+            )
+            if success:
+                logger.info(
+                    f"Response sent via reply_token",
+                    extra={"request_id": request.request_id}
+                )
+                # Cache the bot's response for potential future quotes
+                if sent_message_id:
+                    cache_message(sent_message_id, "text", sent_text)
+                    logger.debug(f"Cached bot response: id={sent_message_id}")
+
+        if not success:
+            # Reply token expired or failed, use push message
+            success = await line_service.push_text(
+                to=request.group_id,
+                text=response_text,
+            )
+            if success:
+                logger.info(
+                    f"Response sent via push message",
+                    extra={"request_id": request.request_id}
+                )
+            else:
+                logger.error(
+                    f"Failed to send response",
+                    extra={"request_id": request.request_id}
+                )
+
+    except Exception as e:
+        logger.error(
+            f"LLM request processing failed: {e}",
+            extra={"request_id": request.request_id},
+            exc_info=True
+        )
+
+        # Try to notify user of error (use reply_token if available, otherwise push)
+        try:
+            if request.reply_token:
+                await line_service.reply_text(
+                    reply_token=request.reply_token,
+                    text="❌ 處理請求時發生錯誤，請稍後再試。",
+                )
+            else:
+                await line_service.push_text(
+                    to=request.group_id,
+                    text="❌ 處理請求時發生錯誤，請稍後再試。",
+                )
+        except Exception:
+            pass  # Best effort notification
+
+
+@asynccontextmanager
+async def lifespan(app: FastAPI):
+    """
+    Application lifespan manager.
+    
+    Handles startup initialization and graceful shutdown.
+    """
+    settings = get_settings()
+    
+    # Configure logging
+    setup_logging(
+        level=settings.log_level,
+        json_output=False,  # Use readable format for now
+    )
+    
+    logger.info("=" * 50)
+    logger.info("LINE Bot with Ollama VLM - Starting up")
+    logger.info("=" * 50)
+    
+    # Initialize services
+    line_service = get_line_service()
+    ollama_service = get_ollama_service()
+    queue_service = get_queue_service()
+    rate_limit_service = get_rate_limit_service()
+    drive_service = get_drive_service()
+    
+    # Health check Ollama
+    if await ollama_service.health_check():
+        logger.info("✅ Ollama service is available")
+    else:
+        logger.warning("⚠️ Ollama service is not responding - bot will retry on requests")
+    
+    # Register queue processor
+    queue_service.set_processor(process_llm_request)
+    
+    # Start queue worker
+    await queue_service.start_worker()
+    logger.info("✅ Queue worker started")
+    
+    # Start Drive background sync (if configured)
+    await drive_service.start_background_sync()
+    if drive_service.is_configured:
+        logger.info("✅ Drive sync started")
+    else:
+        logger.info("ℹ️ Drive sync not configured, using default prompts")
+    
+    logger.info(f"🚀 Server ready on {settings.host}:{settings.port}")
+    logger.info("=" * 50)
+    
+    yield  # Application runs here
+    
+    # Shutdown
+    logger.info("Shutting down...")
+    
+    # Stop queue worker gracefully
+    await queue_service.stop_worker(graceful=True)
+    
+    # Stop Drive sync
+    await close_drive_service()
+    
+    # Close service connections
+    await close_ollama_service()
+    await close_line_service()
+    
+    logger.info("Shutdown complete")
+
+
+# Create FastAPI app
+app = FastAPI(
+    title="LINE Bot with Ollama VLM",
+    description="LINE chatbot with local Ollama VLM integration",
+    version="1.0.0",
+    lifespan=lifespan,
+)
+
+
+@app.get("/")
+async def root():
+    """Root endpoint - redirects to health check."""
+    return JSONResponse({
+        "message": "LINE Bot is running",
+        "endpoints": {
+            "health": "/health",
+            "webhook": "/webhook (POST only)"
+        }
+    })
+
+
+@app.get("/health")
+async def health_check():
+    """
+    Health check endpoint for monitoring.
+
+    Returns service status and queue statistics.
+    """
+    queue_service = get_queue_service()
+    ollama_service = get_ollama_service()
+    rate_limit_service = get_rate_limit_service()
+
+    ollama_healthy = await ollama_service.health_check()
+
+    drive_service = get_drive_service()
+
+    return JSONResponse({
+        "status": "healthy" if ollama_healthy else "degraded",
+        "services": {
+            "ollama": "up" if ollama_healthy else "down",
+            "queue": queue_service.get_stats(),
+            "rate_limit": rate_limit_service.get_stats(),
+            "drive": drive_service.get_stats(),
+        }
+    })
+
+
+@app.post("/webhook")
+async def webhook(
+    request: Request,
+    x_line_signature: str = Header(..., alias="X-Line-Signature"),
+):
+    """
+    LINE webhook endpoint.
+    
+    Receives webhook events from LINE, validates signature,
+    parses commands, and enqueues requests for processing.
+    
+    Returns 200 immediately to acknowledge receipt.
+    """
+    # Read raw body for signature validation
+    body = await request.body()
+    
+    # Validate signature
+    settings = get_settings()
+    if not validate_line_signature(body, x_line_signature, settings.line_channel_secret):
+        logger.warning("Invalid webhook signature")
+        raise HTTPException(status_code=403, detail="Invalid signature")
+    
+    # Parse JSON body
+    try:
+        import json
+        body_json = json.loads(body.decode('utf-8'))
+        logger.debug(f"Parsed webhook body: {len(body_json.get('events', []))} events")
+    except Exception as e:
+        logger.error(f"Failed to parse webhook body: {e}")
+        raise HTTPException(status_code=400, detail="Invalid JSON")
+
+    # Process events
+    events = body_json.get("events", [])
+    logger.debug(f"Processing {len(events)} events")
+    
+    for event in events:
+        try:
+            await handle_webhook_event(event)
+        except Exception as e:
+            logger.error(f"Error handling event: {e}", exc_info=True)
+            # Continue processing other events
+    
+    # Always return 200 to acknowledge receipt
+    return JSONResponse({"status": "ok"})
+
+
+async def handle_webhook_event(event: Dict[str, Any]) -> None:
+    """
+    Handle a single webhook event.
+
+    Args:
+        event: LINE webhook event dictionary
+    """
+    event_type = event.get("type")
+
+    # Only handle message events
+    if event_type != "message":
+        logger.debug(f"Ignoring event type: {event_type}")
+        return
+
+    # Debug: Log the message content and event structure
+    message = event.get("message", {})
+    message_type = message.get("type")
+    message_text = message.get("text", "")
+    message_id = message.get("id")
+    logger.debug(f"Received message - type: {message_type}, text: {message_text[:50]}")
+
+    # Cache this message for potential future quote/reply
+    if message_id:
+        cache_message(message_id, message_type, message_text if message_type == "text" else None)
+        logger.debug(f"Cached message: id={message_id}, type={message_type}")
+
+    # Log full event structure for debugging reply/quote feature
+    import json
+    logger.debug(f"Full event structure: {json.dumps(event, ensure_ascii=False)}")
+
+    # Parse command from message
+    command = parse_webhook_message(event)
+
+    if command is None:
+        # Not a command message - ignore
+        logger.debug(f"Not a command message (no ! prefix)")
+        return
+
+    if not command.is_valid:
+        # Unknown command - could optionally send help message
+        logger.debug(f"Unknown command in message: {command.command_type}")
+        return
+    
+    context = extract_event_context(event)
+    
+    with LogContext(
+        logger,
+        user_id=context.get("user_id"),
+        command=command.command_type.value,
+    ):
+        # Route to appropriate handler
+        if command.command_type == CommandType.HEJ:
+            await handle_hej_command(command, event)
+        
+        elif command.command_type == CommandType.IMG:
+            await handle_img_command(command, event)
+        
+        elif command.command_type == CommandType.RELOAD:
+            await handle_reload_command(command, event)
+
+
+if __name__ == "__main__":
+    import uvicorn
+
+    settings = get_settings()
+    uvicorn.run(
+        "main:app",
+        host=settings.host,
+        port=settings.port,
+        reload=False,  # Don't use reload in production
+        log_level=settings.log_level.lower(),
+    )

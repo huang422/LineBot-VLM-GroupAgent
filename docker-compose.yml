@@ -1,0 +1,61 @@
+services:
+  # LINE Bot 主服務
+  linebot:
+    build: .
+    container_name: linebot
+    restart: unless-stopped
+    ports:
+      - "8000:8000"
+    env_file:
+      - .env
+    volumes:
+      # 掛載服務帳號金鑰（如果使用 Google Drive）
+      - ./credentials:/app/credentials:ro
+      # 快取目錄
+      - linebot_cache:/tmp/linebot_cache
+    depends_on:
+      - ollama
+    networks:
+      - linebot-network
+    environment:
+      # 指向 Docker 內的 Ollama 服務
+      - OLLAMA_BASE_URL=http://ollama:11434
+
+  # Ollama 服務（Docker 容器，使用 GPU）
+  ollama:
+    image: ollama/ollama:latest
+    container_name: ollama
+    restart: unless-stopped
+    ports:
+      - "11434:11434"
+    volumes:
+      - ollama_data:/root/.ollama
+    networks:
+      - linebot-network
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              count: 1
+              capabilities: [ gpu ]
+    # Cloudflare Quick Tunnel（臨時 URL，用於測試）
+  cloudflared:
+    image: cloudflare/cloudflared:latest
+    container_name: cloudflared
+    restart: unless-stopped
+    command: tunnel --no-autoupdate --url http://linebot:8000
+    depends_on:
+      - linebot
+    networks:
+      - linebot-network
+
+volumes:
+  ollama_data:
+    driver: local
+  linebot_cache:
+    driver: local
+
+networks:
+  linebot-network:
+    driver: bridge

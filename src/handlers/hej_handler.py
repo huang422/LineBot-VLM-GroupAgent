@@ -1,0 +1,164 @@
+"""
+Hej Command Handler for LLM inference requests.
+
+Handles !hej commands by:
+1. Checking rate limits
+2. Creating LLMRequest from parsed command
+3. Enqueuing for processing
+4. Sending queue feedback to user
+"""
+
+from typing import Dict, Any, Optional
+
+from src.handlers.command_handler import ParsedCommand, extract_event_context
+from src.models.llm_request import LLMRequest
+from src.models.prompt_config import DEFAULT_PROMPT_CONFIG
+from src.services.rate_limit_service import get_rate_limit_service
+from src.services.queue_service import get_queue_service, QueueFullError
+from src.services.line_service import get_line_service
+from src.services.message_cache_service import get_cached_message
+from src.utils.logger import get_logger
+
+logger = get_logger("handlers.hej")
+
+# Response messages
+MSG_QUEUED = "🔄 收到！正在處理您的請求... (隊列位置: {position}，預計等待 {wait}秒)"
+MSG_QUEUE_FULL = "⚠️ 抱歉，系統目前繁忙。請稍後再試。"
+MSG_RATE_LIMITED = "⚠️ 您的請求太頻繁了。請在 {seconds} 秒後再試。"
+MSG_EMPTY_PROMPT = "❓ 請在 !hej 後輸入您的問題。例如：!hej 今天天氣如何？"
+MSG_ERROR = "❌ 處理請求時發生錯誤，請稍後再試。"
+
+
+# Global prompt config (will be updated by Drive sync)
+_current_prompt_config = DEFAULT_PROMPT_CONFIG
+
+
+def get_current_prompt() -> str:
+    """Get the current system prompt."""
+    return _current_prompt_config.content
+
+
+def set_prompt_config(config) -> None:
+    """Update the current prompt config (called by Drive sync)."""
+    global _current_prompt_config
+    _current_prompt_config = config
+    logger.info(f"Prompt config updated to version {config.version}")
+
+
+async def handle_hej_command(
+    command: ParsedCommand,
+    event: Dict[str, Any],
+) -> bool:
+    """
+    Handle !hej command for LLM inference.
+
+    Args:
+        command: Parsed command data
+        event: Original LINE webhook event
+
+    Returns:
+        True if request was successfully queued
+    """
+    context = extract_event_context(event)
+    user_id = context["user_id"]
+    group_id = context["group_id"]
+    reply_token = context["reply_token"]
+
+    line_service = get_line_service()
+    rate_limit_service = get_rate_limit_service()
+    queue_service = get_queue_service()
+    
+    # Validate we have required context
+    if not user_id or not group_id:
+        logger.warning("Missing user_id or group_id in event")
+        return False
+    
+    # Check for empty prompt (unless it's a reply with content)
+    if not command.argument and not command.has_quoted_content:
+        if reply_token:
+            await line_service.reply_text(reply_token, MSG_EMPTY_PROMPT)
+        return False
+    
+    # Check rate limit
+    allowed, seconds_until_reset, remaining = await rate_limit_service.check_and_record(user_id)
+    
+    if not allowed:
+        logger.info(
+            f"Rate limit exceeded",
+            extra={"reset_in": seconds_until_reset}
+        )
+        if reply_token:
+            await line_service.reply_text(
+                reply_token,
+                MSG_RATE_LIMITED.format(seconds=seconds_until_reset)
+            )
+        return False
+    
+    try:
+        # Get quoted message content from cache if replying
+        context_text = None
+        quoted_image_message_id = None
+
+        if command.quoted_message_id:
+            cached_msg = get_cached_message(command.quoted_message_id)
+            if cached_msg:
+                if cached_msg["type"] == "text" and cached_msg["text"]:
+                    context_text = cached_msg["text"]
+                    logger.info(f"Retrieved quoted text from cache: {context_text[:50]}...")
+                elif cached_msg["type"] == "image":
+                    quoted_image_message_id = command.quoted_message_id
+                    logger.info("Quoted message is an image, will download later")
+            else:
+                logger.warning(f"Quoted message {command.quoted_message_id} not found in cache")
+
+        # Create LLM request
+        request = LLMRequest(
+            user_id=user_id,
+            group_id=group_id,
+            prompt=command.argument or "請分析這個內容",  # Default for reply-only
+            system_prompt=get_current_prompt(),
+            reply_token=reply_token,
+            context_text=context_text,
+            # Note: context_image_base64 will be populated by the processor if needed
+        )
+
+        # Store quoted image message ID for later processing
+        if quoted_image_message_id:
+            request._quoted_image_message_id = quoted_image_message_id
+        
+        # Try to enqueue
+        position = queue_service.try_enqueue_nowait(request)
+        
+        if position is None:
+            # Queue is full
+            logger.warning("Queue full, request rejected")
+            if reply_token:
+                await line_service.reply_text(reply_token, MSG_QUEUE_FULL)
+            return False
+        
+        logger.info(
+            f"Request queued",
+            extra={
+                "request_id": request.request_id,
+                "position": position,
+                "has_context": command.has_quoted_content,
+            }
+        )
+
+        # Don't send queue confirmation - will reply directly with LLM response
+        # The LLM response will use reply_token if still valid, otherwise push message
+
+        return True
+        
+    except ValueError as e:
+        # Validation error in LLMRequest
+        logger.error(f"Invalid request: {e}")
+        if reply_token:
+            await line_service.reply_text(reply_token, MSG_ERROR)
+        return False
+        
+    except Exception as e:
+        logger.error(f"Unexpected error in hej handler: {e}", exc_info=True)
+        if reply_token:
+            await line_service.reply_text(reply_token, MSG_ERROR)
+        return False

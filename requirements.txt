@@ -1,0 +1,32 @@
+# LINE Bot with Local Ollama VLM Integration
+# Python 3.11+
+
+# Web Framework
+fastapi>=0.109.0
+uvicorn[standard]>=0.27.0
+
+# LINE Messaging API
+line-bot-sdk>=3.5.0
+
+# Ollama Integration
+ollama>=0.1.7
+
+# Google Drive API
+google-api-python-client>=2.111.0
+google-auth>=2.27.0
+google-auth-oauthlib>=1.2.0
+google-auth-httplib2>=0.2.0
+
+# Image Processing
+Pillow>=10.2.0
+
+# Data Validation
+pydantic>=2.5.0
+pydantic-settings>=2.1.0
+
+# Async utilities
+aiofiles>=23.2.0
+httpx>=0.26.0
+
+# Environment management
+python-dotenv>=1.0.0
