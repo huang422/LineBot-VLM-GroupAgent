@@ -1,13 +1,17 @@
 # AI-LineBot: Production-Ready LINE Chatbot with Local VLM
 
-[![Python](https://img.shields.io/badge/Python-3.11+-blue.svg)](https://www.python.org/)
-[![FastAPI](https://img.shields.io/badge/FastAPI-0.109+-green.svg)](https://fastapi.tiangolo.com/)
-[![Docker](https://img.shields.io/badge/Docker-Compose-blue.svg)](https://docs.docker.com/compose/)
+[![Python](https://img.shields.io/badge/Python-3.11+-blue.svg?logo=python&logoColor=white)](https://www.python.org/)
+[![FastAPI](https://img.shields.io/badge/FastAPI-0.109+-009688.svg?logo=fastapi&logoColor=white)](https://fastapi.tiangolo.com/)
+[![Ollama](https://img.shields.io/badge/Ollama-gemma3:4b-000000.svg?logo=ollama&logoColor=white)](https://ollama.ai/)
+[![LINE](https://img.shields.io/badge/LINE-Messaging%20API-00C300.svg?logo=line&logoColor=white)](https://developers.line.biz/)
+[![Docker](https://img.shields.io/badge/Docker-Compose-2496ED.svg?logo=docker&logoColor=white)](https://docs.docker.com/compose/)
+[![Google Drive](https://img.shields.io/badge/Google%20Drive-API-4285F4.svg?logo=googledrive&logoColor=white)](https://developers.google.com/drive)
+[![APScheduler](https://img.shields.io/badge/APScheduler-3.10+-orange.svg)](https://apscheduler.readthedocs.io/)
+[![CUDA](https://img.shields.io/badge/NVIDIA-CUDA-76B900.svg?logo=nvidia&logoColor=white)](https://developer.nvidia.com/cuda-zone)
+[![Cloudflare](https://img.shields.io/badge/Cloudflare-Tunnel-F38020.svg?logo=cloudflare&logoColor=white)](https://www.cloudflare.com/)
 [![Buy Me A Coffee](https://img.shields.io/badge/Buy%20Me%20a%20Coffee-ffdd00?style=for-the-badge&logo=buy-me-a-coffee&logoColor=black)](https://www.buymeacoffee.com/huang422)
 
 A **production-grade LINE group chatbot** powered by local **Ollama Vision-Language Models (VLM)**, enabling AI conversations and image analysis without cloud API dependencies. Built with **FastAPI** and enterprise-level architecture: async queue management, rate limiting, Google Drive integration, GPU-optimized inference, and scheduled messaging.
-
-> **Perfect for interviews**: Demonstrates async Python, microservices patterns, LLM integration, and cloud-native deployment.
 
 ---
 
@@ -30,9 +34,9 @@ A **production-grade LINE group chatbot** powered by local **Ollama Vision-Langu
 └────────────────────┬────────────────────────────────────────┘
                      ↓
 ┌─────────────────────────────────────────────────────────────┐
-│  FastAPI Server                                              │
-│  ├─ Webhook Signature Validation (HMAC-SHA256)             │
-│  ├─ Command Parser (!hej, !img, !reload)                   │
+│  FastAPI Server                                             │
+│  ├─ Webhook Signature Validation (HMAC-SHA256)              │
+│  ├─ Command Parser (!hej, !img, !reload)                    │
 │  └─ Handler Router                                          │
 └────────────────────┬────────────────────────────────────────┘
                      ↓
