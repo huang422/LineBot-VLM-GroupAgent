@@ -11,7 +11,7 @@
 [![Cloudflare](https://img.shields.io/badge/Cloudflare-Tunnel-F38020.svg?logo=cloudflare&logoColor=white)](https://www.cloudflare.com/)
 [![Buy Me A Coffee](https://img.shields.io/badge/Buy%20Me%20a%20Coffee-ffdd00?style=for-the-badge&logo=buy-me-a-coffee&logoColor=black)](https://www.buymeacoffee.com/huang422)
 
-A **production-grade LINE group chatbot** powered by local **Ollama Vision-Language Models (VLM)**, enabling AI conversations and image analysis without cloud API dependencies. Built with **FastAPI** and enterprise-level architecture: async queue management, rate limiting, Google Drive integration, GPU-optimized inference, and scheduled messaging.
+A **production-ready LINE group chatbot** powered by local **Ollama Vision-Language Models (VLM)**, enabling AI conversations and image analysis without cloud API dependencies. Built with **FastAPI** and enterprise-level architecture: async queue management, rate limiting, Google Drive integration, GPU-optimized inference, and scheduled messaging.
 
 ---
 
