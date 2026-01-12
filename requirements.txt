@@ -31,3 +31,6 @@ httpx>=0.26.0
 
 # Environment management
 python-dotenv>=1.0.0
+
+# Task Scheduling
+APScheduler>=3.10.0

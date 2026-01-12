@@ -28,6 +28,7 @@ from src.services.queue_service import get_queue_service
 from src.services.rate_limit_service import get_rate_limit_service
 from src.services.image_service import download_and_process_image
 from src.services.drive_service import get_drive_service, close_drive_service
+from src.services.scheduler_service import get_scheduler_service, close_scheduler_service
 
 # Handlers
 from src.handlers.command_handler import (
@@ -197,6 +198,7 @@ async def lifespan(app: FastAPI):
     queue_service = get_queue_service()
     rate_limit_service = get_rate_limit_service()
     drive_service = get_drive_service()
+    scheduler_service = get_scheduler_service()
     
     # Health check Ollama
     if await ollama_service.health_check():
@@ -217,7 +219,34 @@ async def lifespan(app: FastAPI):
         logger.info("✅ Drive sync started")
     else:
         logger.info("ℹ️ Drive sync not configured, using default prompts")
-    
+
+    # Start scheduler and configure scheduled messages
+    scheduler_service.start()
+    if settings.scheduled_messages_enabled and settings.scheduled_group_id:
+        # 排程 1: 每週一晚上 9:00
+        scheduler_service.add_weekly_message(
+            job_id="monday_workout_reminder",
+            day_of_week="mon",
+            hour=21,
+            minute=0,
+            group_id=settings.scheduled_group_id,
+            message="明天操一下嗎?",
+        )
+
+        # 排程 2: 每週五下午 6:30
+        scheduler_service.add_weekly_message(
+            job_id="pineapple_workout_reminder",
+            day_of_week="mon",
+            hour=21,
+            minute=30,
+            group_id=settings.scheduled_group_id,
+            message="啊哈！@鳳梨 還沒回覆督促一下",
+        )
+
+        logger.info("✅ Scheduled messages configured")
+    else:
+        logger.info("ℹ️ Scheduled messages not enabled")
+
     logger.info(f"🚀 Server ready on {settings.host}:{settings.port}")
     logger.info("=" * 50)
     
@@ -225,17 +254,20 @@ async def lifespan(app: FastAPI):
     
     # Shutdown
     logger.info("Shutting down...")
-    
+
     # Stop queue worker gracefully
     await queue_service.stop_worker(graceful=True)
-    
+
+    # Stop scheduler
+    close_scheduler_service()
+
     # Stop Drive sync
     await close_drive_service()
-    
+
     # Close service connections
     await close_ollama_service()
     await close_line_service()
-    
+
     logger.info("Shutdown complete")
 
 
@@ -277,10 +309,10 @@ async def health_check():
     queue_service = get_queue_service()
     ollama_service = get_ollama_service()
     rate_limit_service = get_rate_limit_service()
+    drive_service = get_drive_service()
+    scheduler_service = get_scheduler_service()
 
     ollama_healthy = await ollama_service.health_check()
-
-    drive_service = get_drive_service()
 
     return JSONResponse({
         "status": "healthy" if ollama_healthy else "degraded",
@@ -289,6 +321,7 @@ async def health_check():
             "queue": queue_service.get_stats(),
             "rate_limit": rate_limit_service.get_stats(),
             "drive": drive_service.get_stats(),
+            "scheduler": scheduler_service.get_stats(),
         }
     })
 

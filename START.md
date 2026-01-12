@@ -37,7 +37,16 @@ docker compose ps
 
 docker compose down && docker compose up -d
 docker compose down && docker compose up -d --build
+
+# restart linebot
+docker compose build linebot && docker compose up -d linebot
+
+# webhook url
 docker logs cloudflared 2>&1 | grep -o 'https://[a-zA-Z0-9-]*\.trycloudflare\.com' | head -1
+
+# linebot log search group_id
+docker compose logs --tail=500 linebot | grep -E "(group_id|groupId|Full event structure)"
+docker compose logs linebot | grep -o '"groupId": "[^"]*"' | sort -u
 ```
 
 應該看到三個服務都在運行：

@@ -17,6 +17,7 @@ from src.services.rate_limit_service import get_rate_limit_service
 from src.services.queue_service import get_queue_service, QueueFullError
 from src.services.line_service import get_line_service
 from src.services.message_cache_service import get_cached_message
+from src.services.drive_service import get_drive_service
 from src.utils.logger import get_logger
 
 logger = get_logger("handlers.hej")
@@ -50,14 +51,18 @@ async def handle_hej_command(
     event: Dict[str, Any],
 ) -> bool:
     """
-    Handle !hej command for LLM inference.
+    Handle !hej command for LLM inference or image keyword search.
+
+    First checks if the argument matches an image keyword.
+    If it does, sends the image directly (like !img).
+    Otherwise, proceeds with LLM inference.
 
     Args:
         command: Parsed command data
         event: Original LINE webhook event
 
     Returns:
-        True if request was successfully queued
+        True if request was successfully queued or image was sent
     """
     context = extract_event_context(event)
     user_id = context["user_id"]
@@ -67,17 +72,47 @@ async def handle_hej_command(
     line_service = get_line_service()
     rate_limit_service = get_rate_limit_service()
     queue_service = get_queue_service()
-    
+    drive_service = get_drive_service()
+
     # Validate we have required context
     if not user_id or not group_id:
         logger.warning("Missing user_id or group_id in event")
         return False
-    
+
     # Check for empty prompt (unless it's a reply with content)
     if not command.argument and not command.has_quoted_content:
         if reply_token:
             await line_service.reply_text(reply_token, MSG_EMPTY_PROMPT)
         return False
+
+    # NEW: Check if argument matches an image keyword
+    # Only check if there's an argument and Drive is configured
+    if command.argument and drive_service.is_configured:
+        keyword = command.argument.strip()
+        image_config = drive_service.image_config
+
+        # Check if this keyword matches an image
+        if image_config.mappings:
+            mapping = image_config.get_by_keyword(keyword)
+
+            if mapping:
+                # Found matching image - send it like !img does
+                logger.info(f"!hej matched image keyword: {keyword}, sending image")
+                from src.handlers.img_handler import handle_img_command
+
+                # Create a temporary command object for img handler
+                img_command = ParsedCommand(
+                    command_type=command.command_type,  # Keep original type for logging
+                    argument=keyword,
+                    raw_text=command.raw_text,
+                    is_reply=command.is_reply,
+                    quoted_message_id=command.quoted_message_id,
+                    quoted_message_type=command.quoted_message_type,
+                    quoted_message_text=command.quoted_message_text,
+                )
+
+                # Delegate to img handler
+                return await handle_img_command(img_command, event)
     
     # Check rate limit
     allowed, seconds_until_reset, remaining = await rate_limit_service.check_and_record(user_id)

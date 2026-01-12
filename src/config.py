@@ -166,6 +166,18 @@ Be friendly but professional.""",
         description="Default system prompt when Google Drive is not configured"
     )
 
+    # ==========================================================================
+    # Scheduled Messages Configuration
+    # ==========================================================================
+    scheduled_messages_enabled: bool = Field(
+        default=False,
+        description="Enable scheduled message feature"
+    )
+    scheduled_group_id: Optional[str] = Field(
+        default=None,
+        description="LINE group ID for scheduled messages"
+    )
+
 
 @lru_cache
 def get_settings() -> Settings:
