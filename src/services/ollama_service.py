@@ -103,25 +103,27 @@ class OllamaService:
         system_prompt: Optional[str] = None,
         image_base64: Optional[str] = None,
         context_text: Optional[str] = None,
+        conversation_history: Optional[str] = None,
     ) -> str:
         """
         Generate a response from the LLM.
-        
+
         Args:
             prompt: User question/prompt
             system_prompt: System prompt for behavior control
             image_base64: Optional base64-encoded image for vision tasks
             context_text: Optional text context (e.g., quoted message)
-            
+            conversation_history: Optional conversation history for context
+
         Returns:
             Generated response text
-            
+
         Raises:
             OllamaConnectionError: If service is unreachable
             OllamaInferenceError: If inference fails
         """
         # Build the full prompt with context
-        full_prompt = self._build_prompt(prompt, context_text)
+        full_prompt = self._build_prompt(prompt, context_text, conversation_history)
         
         # Build request payload
         payload = {
@@ -201,22 +203,24 @@ class OllamaService:
         system_prompt: Optional[str] = None,
         image_base64: Optional[str] = None,
         context_text: Optional[str] = None,
+        conversation_history: Optional[str] = None,
     ) -> AsyncGenerator[str, None]:
         """
         Generate a streaming response from the LLM.
-        
+
         Yields tokens as they are generated for real-time output.
-        
+
         Args:
             prompt: User question/prompt
             system_prompt: System prompt for behavior control
             image_base64: Optional base64-encoded image
             context_text: Optional text context
-            
+            conversation_history: Optional conversation history for context
+
         Yields:
             Generated text chunks
         """
-        full_prompt = self._build_prompt(prompt, context_text)
+        full_prompt = self._build_prompt(prompt, context_text, conversation_history)
         
         payload = {
             "model": self.model,
@@ -262,26 +266,43 @@ class OllamaService:
     def _build_prompt(
         self,
         prompt: str,
-        context_text: Optional[str] = None
+        context_text: Optional[str] = None,
+        conversation_history: Optional[str] = None
     ) -> str:
         """
-        Build the full prompt including context.
-        
+        Build the full prompt including context and conversation history.
+
         Args:
             prompt: User's question
             context_text: Optional context from quoted message
-            
+            conversation_history: Optional recent conversation history
+
         Returns:
             Combined prompt string
         """
-        if context_text:
-            return f"""Referenced message:
----
-{context_text}
----
+        parts = []
 
-User's question: {prompt}"""
-        
+        # Add user's current question
+        if parts:
+            parts.append(f"User's question: {prompt}")
+            return "\n".join(parts)
+
+        # Add quoted message context (if available)
+        if context_text:
+            parts.append("Referenced message:")
+            parts.append("---")
+            parts.append(context_text)
+            parts.append("---")
+            parts.append("")
+
+        # Add conversation history first (if available)
+        if conversation_history:
+            parts.append("Recent conversation:")
+            parts.append("---")
+            parts.append(conversation_history)
+            parts.append("---")
+            parts.append("")                          
+
         return prompt
 
 

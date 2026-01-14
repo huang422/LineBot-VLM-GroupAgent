@@ -44,6 +44,10 @@ from src.handlers.img_handler import handle_img_command
 from src.models.llm_request import LLMRequest
 
 from src.services.message_cache_service import cache_message
+from src.services.conversation_context_service import (
+    add_message as add_context_message,
+    get_stats as get_context_stats,
+)
 
 logger = get_logger("main")
 
@@ -113,6 +117,7 @@ async def process_llm_request(request: LLMRequest) -> None:
             system_prompt=request.system_prompt,
             image_base64=image_base64,
             context_text=request.context_text,
+            conversation_history=request.conversation_history,
         )
 
         # Try to use reply_token first (valid for ~60s), fallback to push message
@@ -133,6 +138,14 @@ async def process_llm_request(request: LLMRequest) -> None:
                     cache_message(sent_message_id, "text", sent_text)
                     logger.debug(f"Cached bot response: id={sent_message_id}")
 
+                # Add bot's response to conversation context
+                # Use a special user_id to identify bot messages
+                from src.config import get_settings
+                settings = get_settings()
+                bot_user_id = "BOT_" + settings.line_channel_secret[:8]
+                add_context_message(request.group_id, bot_user_id, response_text, "text")
+                logger.debug(f"Added bot response to conversation context")
+
         if not success:
             # Reply token expired or failed, use push message
             success = await line_service.push_text(
@@ -144,6 +157,12 @@ async def process_llm_request(request: LLMRequest) -> None:
                     f"Response sent via push message",
                     extra={"request_id": request.request_id}
                 )
+                # Add bot's response to conversation context
+                from src.config import get_settings
+                settings = get_settings()
+                bot_user_id = "BOT_" + settings.line_channel_secret[:8]
+                add_context_message(request.group_id, bot_user_id, response_text, "text")
+                logger.debug(f"Added bot response to conversation context")
             else:
                 logger.error(
                     f"Failed to send response",
@@ -322,6 +341,7 @@ async def health_check():
             "rate_limit": rate_limit_service.get_stats(),
             "drive": drive_service.get_stats(),
             "scheduler": scheduler_service.get_stats(),
+            "conversation_context": get_context_stats(),
         }
     })
 
@@ -393,10 +413,28 @@ async def handle_webhook_event(event: Dict[str, Any]) -> None:
     message_id = message.get("id")
     logger.debug(f"Received message - type: {message_type}, text: {message_text[:50]}")
 
+    # Extract context for conversation history
+    source = event.get("source", {})
+    user_id = source.get("userId")
+    group_id = source.get("groupId") or source.get("roomId") or user_id
+
     # Cache this message for potential future quote/reply
     if message_id:
         cache_message(message_id, message_type, message_text if message_type == "text" else None)
         logger.debug(f"Cached message: id={message_id}, type={message_type}")
+
+    # Add to conversation context (for all text and image messages)
+    if user_id and group_id and message_type in ["text", "image", "sticker"]:
+        # For text messages, store the actual text
+        # For other types, store a description
+        if message_type == "text" and message_text:
+            add_context_message(group_id, user_id, message_text, message_type)
+        elif message_type == "image":
+            add_context_message(group_id, user_id, "[圖片]", message_type)
+        elif message_type == "sticker":
+            add_context_message(group_id, user_id, "[貼圖]", message_type)
+
+        logger.debug(f"Added to conversation context: group={group_id[:8]}, type={message_type}")
 
     # Log full event structure for debugging reply/quote feature
     import json

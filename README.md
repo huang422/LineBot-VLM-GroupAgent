@@ -2,7 +2,7 @@
 
 [![Python](https://img.shields.io/badge/Python-3.11+-blue.svg?logo=python&logoColor=white)](https://www.python.org/)
 [![FastAPI](https://img.shields.io/badge/FastAPI-0.109+-009688.svg?logo=fastapi&logoColor=white)](https://fastapi.tiangolo.com/)
-[![Ollama](https://img.shields.io/badge/Ollama-gemma3:4b-000000.svg?logo=ollama&logoColor=white)](https://ollama.ai/)
+[![Ollama](https://img.shields.io/badge/Ollama-gemma3:12b-000000.svg?logo=ollama&logoColor=white)](https://ollama.ai/)
 [![LINE](https://img.shields.io/badge/LINE-Messaging%20API-00C300.svg?logo=line&logoColor=white)](https://developers.line.biz/)
 [![Docker](https://img.shields.io/badge/Docker-Compose-2496ED.svg?logo=docker&logoColor=white)](https://docs.docker.com/compose/)
 [![Google Drive](https://img.shields.io/badge/Google%20Drive-API-4285F4.svg?logo=googledrive&logoColor=white)](https://developers.google.com/drive)
@@ -19,7 +19,8 @@ A **production-ready LINE group chatbot** powered by local **Ollama Vision-Langu
 
 ### Core Capabilities
 
-- **AI Conversations** - Natural language Q&A powered by local Ollama LLM (gemma3:4b)
+- **AI Conversations** - Natural language Q&A powered by local Ollama LLM (gemma3:12b)
+- **Conversation Context** - Automatic tracking of last 5 messages per group for contextual responses
 - **Vision Analysis** - Reply to images with questions for instant multimodal analysis
 - **Smart Image Retrieval** - Keyword-based image search from Google Drive
 - **Scheduled Messages** - Cron-based recurring notifications (APScheduler)
@@ -37,6 +38,7 @@ A **production-ready LINE group chatbot** powered by local **Ollama Vision-Langu
 │  FastAPI Server                                             │
 │  ├─ Webhook Signature Validation (HMAC-SHA256)              │
 │  ├─ Command Parser (!hej, !img, !reload)                    │
+│  ├─ Context Manager (Last 5 messages/group)                 │
 │  └─ Handler Router                                          │
 └────────────────────┬────────────────────────────────────────┘
                      ↓
@@ -56,7 +58,7 @@ A **production-ready LINE group chatbot** powered by local **Ollama Vision-Langu
 | Component | Technology | Purpose |
 |-----------|-----------|---------|
 | **Web Framework** | FastAPI + Uvicorn | Async API server with webhook handling |
-| **LLM Engine** | Ollama (gemma3:4b) | Local GPU-accelerated inference (4B params) |
+| **LLM Engine** | Ollama (gemma3:12b) | Local GPU-accelerated inference (4B params) |
 | **Messaging** | LINE Messaging API | User interaction and webhook events |
 | **Configuration** | Google Drive API | Collaborative prompt/image management |
 | **Queue** | asyncio.Queue | Sequential GPU request processing |
@@ -99,7 +101,7 @@ LINE_CHANNEL_ACCESS_TOKEN=your_token_here
 docker compose up -d
 
 # Pull the LLM model (first time only, ~2.5GB)
-docker compose exec ollama ollama pull gemma3:4b
+docker compose exec ollama ollama pull gemma3:12b
 
 # Get the public webhook URL
 docker compose logs cloudflared | grep trycloudflare.com
@@ -133,6 +135,15 @@ Add the bot to a LINE group:
 ```
 !hej What is the capital of France?
 !hej Explain quantum computing simply
+```
+
+**Contextual Conversations** (Automatic):
+```
+User A: "今天天氣真好"
+User B: "要不要去打球?"
+Bot:    "聽起來不錯!"
+User A: "!hej 幾點集合?"
+→ Bot automatically sees last 5 messages and understands the context
 ```
 
 **Vision Analysis** (Reply to images):
@@ -263,7 +274,9 @@ src/
 │   ├── ollama_service.py
 │   ├── drive_service.py
 │   ├── queue_service.py
-│   └── scheduler_service.py
+│   ├── scheduler_service.py
+│   ├── message_cache_service.py
+│   └── conversation_context_service.py  # NEW: Context tracking
 ├── handlers/            # Command routing
 │   ├── hej_handler.py
 │   ├── img_handler.py
@@ -303,14 +316,15 @@ if not allowed:
 ```
 1. LINE webhook → FastAPI
 2. Signature validation (HMAC-SHA256)
-3. Command parsing
-4. Rate limit check
-5. Queue enqueue
-6. Position feedback
-7. Background worker
-8. Ollama GPU inference
-9. LINE response
-10. Message caching
+3. Message saved to conversation context (last 5/group)
+4. Command parsing
+5. Rate limit check
+6. Context retrieval (recent conversation history)
+7. Queue enqueue with context
+8. Background worker
+9. Ollama GPU inference (with context in prompt)
+10. LINE response
+11. Bot response saved to context
 ```
 
 ---
@@ -327,6 +341,105 @@ if not allowed:
 - **Non-Root Container** - Docker runs as `appuser`
 - **Secret Management** - `.gitignore` excludes credentials
 - **Timeout Enforcement** - All external APIs have limits
+
+---
+
+## Conversation Context System
+
+### How It Works
+
+The bot automatically tracks the **last 5 messages** in each group to provide contextual responses. This happens transparently without any user action needed.
+
+#### Technical Implementation
+
+**1. Message Storage**
+```python
+# Every incoming message is automatically saved
+add_context_message(group_id, user_id, message_text, message_type)
+
+# Uses deque with maxlen=5 (memory-efficient)
+# Older messages are automatically discarded
+```
+
+**2. Context Retrieval**
+When a user sends `!hej`, the bot:
+```python
+# Gets last 5 messages for this group
+conversation_history = get_context_as_text(group_id, max_messages=5)
+
+# Example output:
+# User_U111: 今天天氣真好
+# User_U222: 要不要去打球?
+# Bot: 聽起來不錯!
+# User_U222: 下午3點?
+# User_U111: 好的
+```
+
+**3. Prompt Construction**
+The context is integrated into the LLM prompt:
+```
+Recent conversation:
+---
+User_U111: 今天天氣真好
+User_U222: 要不要去打球?
+Bot: 聽起來不錯!
+---
+
+User's question: 幾點集合?
+```
+
+This allows the LLM to understand that "幾點集合?" is about the earlier basketball discussion.
+
+### Features
+
+- **Automatic**: No special commands needed
+- **Group-Isolated**: Each group has independent context
+- **Memory-Efficient**: Max 5 messages × ~200 bytes = ~1KB per group
+- **TTL**: Messages expire after 1 hour
+- **Zero Cost**: No LINE API calls (pure memory operations)
+
+### Monitoring Context
+
+**View in Docker logs:**
+```bash
+# See context updates in real-time
+docker compose logs -f linebot | grep "Current context"
+
+# View context used for LLM requests
+docker compose logs -f linebot | grep "Conversation history"
+```
+
+**Example log output:**
+```
+[INFO] conversation_context: 📝 Current context for group C1234567... (3 messages):
+  1. User_U111: 今天天氣真好
+  2. User_U222: 要不要去打球?
+  3. Bot: 聽起來不錯!
+```
+
+**Health endpoint stats:**
+```bash
+curl http://localhost:8000/health | jq '.services.conversation_context'
+```
+
+Output:
+```json
+{
+  "groups_tracked": 5,
+  "total_messages": 23,
+  "max_messages_per_group": 5,
+  "ttl_seconds": 3600
+}
+```
+
+### Supported Message Types
+
+| Type | Storage | Display in Context |
+|------|---------|-------------------|
+| Text | Full content | `User_xxx: 訊息內容` |
+| Image | Metadata only | `User_xxx: [發送了圖片]` |
+| Sticker | Metadata only | `User_xxx: [發送了貼圖]` |
+| Bot Reply | Full content | `Bot: 回覆內容` |
 
 ---
 
@@ -352,6 +465,12 @@ curl http://localhost:8000/health | jq
         "id": "monday_reminder",
         "next_run": "2026-01-19T21:00:00+08:00"
       }]
+    },
+    "conversation_context": {
+      "groups_tracked": 5,
+      "total_messages": 23,
+      "max_messages_per_group": 5,
+      "ttl_seconds": 3600
     }
   }
 }
@@ -455,7 +574,7 @@ docker compose logs --tail=100 linebot
 docker compose exec ollama ollama list
 
 # Re-pull
-docker compose exec ollama ollama pull gemma3:4b
+docker compose exec ollama ollama pull gemma3:12b
 
 # Check GPU
 docker compose exec ollama nvidia-smi

@@ -25,7 +25,7 @@ MAX_PROMPT_LENGTH = 4000
 class LLMRequest:
     """
     Represents a queued LLM inference request.
-    
+
     Attributes:
         request_id: Unique identifier for tracking (auto-generated UUID)
         user_id: LINE user ID who initiated the request
@@ -36,11 +36,12 @@ class LLMRequest:
         reply_token: LINE reply token (valid for ~60s, optional)
         context_text: Quoted message text for reply-based interaction
         context_image_base64: Base64-encoded image for multimodal requests
+        conversation_history: Recent conversation context (formatted string)
         priority: Queue priority (0 = normal, higher = more urgent)
         max_retries: Maximum retry attempts for transient failures
         retry_count: Current retry attempt number
     """
-    
+
     user_id: str
     group_id: str
     prompt: str
@@ -50,6 +51,7 @@ class LLMRequest:
     reply_token: Optional[str] = None
     context_text: Optional[str] = None
     context_image_base64: Optional[str] = None
+    conversation_history: Optional[str] = None
     priority: int = 0
     max_retries: int = 1
     retry_count: int = 0
@@ -132,6 +134,7 @@ class LLMRequest:
             "prompt_length": len(self.prompt),
             "has_context_text": self.context_text is not None,
             "has_context_image": self.context_image_base64 is not None,
+            "has_conversation_history": self.conversation_history is not None,
             "timestamp": self.timestamp.isoformat(),
             "priority": self.priority,
             "retry_count": self.retry_count,

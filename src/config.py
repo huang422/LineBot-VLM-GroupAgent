@@ -41,7 +41,7 @@ class Settings(BaseSettings):
         description="Ollama API base URL"
     )
     ollama_model: str = Field(
-        default="gemma3:4b",
+        default="gemma3:12b",
         description="Ollama model name for inference"
     )
     

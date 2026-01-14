@@ -273,6 +273,16 @@ watch -n 1 nvidia-smi
 
 # 查看資源使用
 docker stats
+
+# 查看所有排程任務和下次執行時間
+curl -s http://localhost:8000/health | jq '.services.scheduler'
+
+# 實時查看所有訊息的上下文
+docker compose logs -f linebot | grep "Current context"
+
+# 查看 LLM 請求時的完整上下文
+docker compose logs -f linebot | grep "Conversation history"
+
 ```
 
 ---

@@ -17,6 +17,7 @@ from src.services.rate_limit_service import get_rate_limit_service
 from src.services.queue_service import get_queue_service, QueueFullError
 from src.services.line_service import get_line_service
 from src.services.message_cache_service import get_cached_message
+from src.services.conversation_context_service import get_context_as_text
 from src.services.drive_service import get_drive_service
 from src.utils.logger import get_logger
 
@@ -153,6 +154,14 @@ async def handle_hej_command(
             else:
                 logger.warning(f"Quoted message {command.quoted_message_id} not found in cache")
 
+        # Get conversation history for this group (last 5 messages)
+        conversation_history = get_context_as_text(group_id, max_messages=5)
+        if conversation_history:
+            logger.info(
+                f"📚 Conversation history for this request ({len(conversation_history)} chars):\n"
+                f"---\n{conversation_history}\n---"
+            )
+
         # Create LLM request
         request = LLMRequest(
             user_id=user_id,
@@ -161,6 +170,7 @@ async def handle_hej_command(
             system_prompt=get_current_prompt(),
             reply_token=reply_token,
             context_text=context_text,
+            conversation_history=conversation_history,
             # Note: context_image_base64 will be populated by the processor if needed
         )
 
