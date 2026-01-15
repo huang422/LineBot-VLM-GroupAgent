@@ -7,6 +7,7 @@
 [![Docker](https://img.shields.io/badge/Docker-Compose-2496ED.svg?logo=docker&logoColor=white)](https://docs.docker.com/compose/)
 [![Google Drive](https://img.shields.io/badge/Google%20Drive-API-4285F4.svg?logo=googledrive&logoColor=white)](https://developers.google.com/drive)
 [![APScheduler](https://img.shields.io/badge/APScheduler-3.10+-orange.svg)](https://apscheduler.readthedocs.io/)
+[![Tavily](https://img.shields.io/badge/Tavily-AI%20Search-5A67D8.svg)](https://tavily.com/)
 [![CUDA](https://img.shields.io/badge/NVIDIA-CUDA-76B900.svg?logo=nvidia&logoColor=white)](https://developer.nvidia.com/cuda-zone)
 [![Cloudflare](https://img.shields.io/badge/Cloudflare-Tunnel-F38020.svg?logo=cloudflare&logoColor=white)](https://www.cloudflare.com/)
 [![Buy Me A Coffee](https://img.shields.io/badge/Buy%20Me%20a%20Coffee-ffdd00?style=for-the-badge&logo=buy-me-a-coffee&logoColor=black)](https://www.buymeacoffee.com/huang422)
@@ -20,7 +21,8 @@ A **production-ready LINE group chatbot** powered by local **Ollama Vision-Langu
 ### Core Capabilities
 
 - **AI Conversations** - Natural language Q&A powered by local Ollama LLM (gemma3:12b)
-- **Conversation Context** - Automatic tracking of last 5 messages per group for contextual responses
+- **Web Search + AI** - Real-time web search with Tavily AI, results fed to LLM for informed answers
+- **Conversation Context** - Automatic tracking of last 3 messages per group for contextual responses
 - **Vision Analysis** - Reply to images with questions for instant multimodal analysis
 - **Smart Image Retrieval** - Keyword-based image search from Google Drive
 - **Scheduled Messages** - Cron-based recurring notifications (APScheduler)
@@ -37,8 +39,8 @@ A **production-ready LINE group chatbot** powered by local **Ollama Vision-Langu
 ┌─────────────────────────────────────────────────────────────┐
 │  FastAPI Server                                             │
 │  ├─ Webhook Signature Validation (HMAC-SHA256)              │
-│  ├─ Command Parser (!hej, !img, !reload)                    │
-│  ├─ Context Manager (Last 5 messages/group)                 │
+│  ├─ Command Parser (!hej, !img, !web, !reload)              │
+│  ├─ Context Manager (Last 3 messages/group)                 │
 │  └─ Handler Router                                          │
 └────────────────────┬────────────────────────────────────────┘
                      ↓
@@ -58,7 +60,8 @@ A **production-ready LINE group chatbot** powered by local **Ollama Vision-Langu
 | Component | Technology | Purpose |
 |-----------|-----------|---------|
 | **Web Framework** | FastAPI + Uvicorn | Async API server with webhook handling |
-| **LLM Engine** | Ollama (gemma3:12b) | Local GPU-accelerated inference (4B params) |
+| **LLM Engine** | Ollama (gemma3:12b) | Local GPU-accelerated inference (12B params) |
+| **Web Search** | Tavily AI | Real-time web search for LLM augmentation |
 | **Messaging** | LINE Messaging API | User interaction and webhook events |
 | **Configuration** | Google Drive API | Collaborative prompt/image management |
 | **Queue** | asyncio.Queue | Sequential GPU request processing |
@@ -121,6 +124,7 @@ docker compose logs cloudflared | grep trycloudflare.com
 Add the bot to a LINE group:
 ```
 !hej What is machine learning?
+!web 2026 AI trends
 !img architecture
 !reload
 ```
@@ -141,9 +145,8 @@ Add the bot to a LINE group:
 ```
 User A: "今天天氣真好"
 User B: "要不要去打球?"
-Bot:    "聽起來不錯!"
 User A: "!hej 幾點集合?"
-→ Bot automatically sees last 5 messages and understands the context
+→ Bot automatically sees last 3 messages and understands the context
 ```
 
 **Vision Analysis** (Reply to images):
@@ -177,6 +180,26 @@ Error handling:
 Keyword "xyz" not found.
 Available: architecture, workflow, diagram...
 ```
+
+### `!web [query]` - Web Search + AI Response
+
+Searches the web using Tavily AI, then feeds results to the LLM for an informed response.
+
+**Basic Search:**
+```
+!web 台灣今天新聞
+!web latest iPhone 16 specs
+!web Python 3.12 new features
+```
+
+**How it works:**
+1. Tavily AI searches the web (3 results, max 400 chars each)
+2. Results are added to LLM prompt as context
+3. LLM generates a response based on search results
+
+**Requirements:**
+- Set `TAVILY_API_KEY` in `.env`
+- Free tier: 1000 searches/month at [tavily.com](https://tavily.com/)
 
 ### `!reload` - Force Config Refresh
 
@@ -222,6 +245,11 @@ LOG_LEVEL=INFO                      # DEBUG/INFO/WARNING/ERROR
 ```bash
 SCHEDULED_MESSAGES_ENABLED=true
 SCHEDULED_GROUP_ID=C1234567890abcdef...  # Get from logs
+```
+
+**Optional - Web Search (Tavily AI):**
+```bash
+TAVILY_API_KEY=tvly-xxxxxxxxxxxxx   # Get from tavily.com (free 1000/month)
 ```
 
 ### Google Drive Setup
@@ -276,10 +304,12 @@ src/
 │   ├── queue_service.py
 │   ├── scheduler_service.py
 │   ├── message_cache_service.py
-│   └── conversation_context_service.py  # NEW: Context tracking
+│   ├── conversation_context_service.py  # Context tracking (last 3 msgs)
+│   └── web_search_service.py            # Tavily AI web search
 ├── handlers/            # Command routing
 │   ├── hej_handler.py
 │   ├── img_handler.py
+│   ├── web_handler.py   # !web command
 │   └── reload_handler.py
 └── utils/               # Helpers
     ├── logger.py
@@ -316,7 +346,7 @@ if not allowed:
 ```
 1. LINE webhook → FastAPI
 2. Signature validation (HMAC-SHA256)
-3. Message saved to conversation context (last 5/group)
+3. Message saved to conversation context (last 3/group)
 4. Command parsing
 5. Rate limit check
 6. Context retrieval (recent conversation history)
@@ -325,6 +355,21 @@ if not allowed:
 9. Ollama GPU inference (with context in prompt)
 10. LINE response
 11. Bot response saved to context
+```
+
+### Data Flow (!web)
+
+```
+1. LINE webhook → FastAPI
+2. Signature validation (HMAC-SHA256)
+3. Command parsing (!web query)
+4. Rate limit check
+5. Tavily AI web search (3 results, max 400 chars each)
+6. Context retrieval (conversation history)
+7. Queue enqueue with web search results + context
+8. Background worker
+9. Ollama GPU inference (search results + context in prompt)
+10. LINE response
 ```
 
 ---
@@ -348,7 +393,7 @@ if not allowed:
 
 ### How It Works
 
-The bot automatically tracks the **last 5 messages** in each group to provide contextual responses. This happens transparently without any user action needed.
+The bot automatically tracks the **last 3 messages** in each group to provide contextual responses. This happens transparently without any user action needed.
 
 #### Technical Implementation
 
@@ -357,35 +402,33 @@ The bot automatically tracks the **last 5 messages** in each group to provide co
 # Every incoming message is automatically saved
 add_context_message(group_id, user_id, message_text, message_type)
 
-# Uses deque with maxlen=5 (memory-efficient)
+# Uses deque with maxlen=3 (memory-efficient)
 # Older messages are automatically discarded
 ```
 
 **2. Context Retrieval**
-When a user sends `!hej`, the bot:
+When a user sends `!hej` or `!web`, the bot:
 ```python
-# Gets last 5 messages for this group
-conversation_history = get_context_as_text(group_id, max_messages=5)
+# Gets last 3 messages for this group
+conversation_history = get_context_as_text(group_id, max_messages=3)
 
 # Example output:
 # User_U111: 今天天氣真好
 # User_U222: 要不要去打球?
 # Bot: 聽起來不錯!
-# User_U222: 下午3點?
-# User_U111: 好的
 ```
 
 **3. Prompt Construction**
 The context is integrated into the LLM prompt:
 ```
+User's question: 幾點集合?
+
 Recent conversation:
 ---
 User_U111: 今天天氣真好
 User_U222: 要不要去打球?
 Bot: 聽起來不錯!
 ---
-
-User's question: 幾點集合?
 ```
 
 This allows the LLM to understand that "幾點集合?" is about the earlier basketball discussion.
@@ -394,7 +437,7 @@ This allows the LLM to understand that "幾點集合?" is about the earlier bask
 
 - **Automatic**: No special commands needed
 - **Group-Isolated**: Each group has independent context
-- **Memory-Efficient**: Max 5 messages × ~200 bytes = ~1KB per group
+- **Memory-Efficient**: Max 3 messages × ~200 bytes = ~600 bytes per group
 - **TTL**: Messages expire after 1 hour
 - **Zero Cost**: No LINE API calls (pure memory operations)
 
@@ -426,8 +469,8 @@ Output:
 ```json
 {
   "groups_tracked": 5,
-  "total_messages": 23,
-  "max_messages_per_group": 5,
+  "total_messages": 12,
+  "max_messages_per_group": 3,
   "ttl_seconds": 3600
 }
 ```
@@ -468,8 +511,8 @@ curl http://localhost:8000/health | jq
     },
     "conversation_context": {
       "groups_tracked": 5,
-      "total_messages": 23,
-      "max_messages_per_group": 5,
+      "total_messages": 12,
+      "max_messages_per_group": 3,
       "ttl_seconds": 3600
     }
   }

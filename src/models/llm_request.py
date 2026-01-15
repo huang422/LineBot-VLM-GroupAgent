@@ -30,13 +30,14 @@ class LLMRequest:
         request_id: Unique identifier for tracking (auto-generated UUID)
         user_id: LINE user ID who initiated the request
         group_id: LINE group/room ID where request originated
-        prompt: User question text from !hej command
+        prompt: User question text from !hej or !web command
         system_prompt: System prompt for LLM behavior
         timestamp: When request was created
         reply_token: LINE reply token (valid for ~60s, optional)
         context_text: Quoted message text for reply-based interaction
         context_image_base64: Base64-encoded image for multimodal requests
         conversation_history: Recent conversation context (formatted string)
+        web_search_results: Web search results for !web commands (formatted string)
         priority: Queue priority (0 = normal, higher = more urgent)
         max_retries: Maximum retry attempts for transient failures
         retry_count: Current retry attempt number
@@ -52,6 +53,7 @@ class LLMRequest:
     context_text: Optional[str] = None
     context_image_base64: Optional[str] = None
     conversation_history: Optional[str] = None
+    web_search_results: Optional[str] = None
     priority: int = 0
     max_retries: int = 1
     retry_count: int = 0
@@ -108,8 +110,17 @@ class LLMRequest:
     
     @property
     def has_context(self) -> bool:
-        """Check if this request has any context (text or image)."""
-        return self.context_text is not None or self.context_image_base64 is not None
+        """Check if this request has any context (text, image, or web search)."""
+        return (
+            self.context_text is not None
+            or self.context_image_base64 is not None
+            or self.web_search_results is not None
+        )
+
+    @property
+    def has_web_search(self) -> bool:
+        """Check if this request includes web search results."""
+        return self.web_search_results is not None
     
     @property
     def can_retry(self) -> bool:
@@ -135,6 +146,7 @@ class LLMRequest:
             "has_context_text": self.context_text is not None,
             "has_context_image": self.context_image_base64 is not None,
             "has_conversation_history": self.conversation_history is not None,
+            "has_web_search": self.web_search_results is not None,
             "timestamp": self.timestamp.isoformat(),
             "priority": self.priority,
             "retry_count": self.retry_count,

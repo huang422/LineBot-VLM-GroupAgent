@@ -29,6 +29,9 @@ pydantic-settings>=2.1.0
 aiofiles>=23.2.0
 httpx>=0.26.0
 
+# Web Search (Tavily AI)
+tavily-python>=0.5.0
+
 # Environment management
 python-dotenv>=1.0.0
 

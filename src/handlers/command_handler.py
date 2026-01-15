@@ -19,6 +19,7 @@ class CommandType(Enum):
     """Supported command types."""
     HEJ = "hej"      # LLM inference
     IMG = "img"      # Image retrieval
+    WEB = "web"      # LLM inference with web search
     RELOAD = "reload"  # Force Drive sync
     UNKNOWN = "unknown"
     NONE = "none"    # Not a command
@@ -53,6 +54,7 @@ class ParsedCommand:
 COMMAND_PREFIXES = {
     "!hej": CommandType.HEJ,
     "!img": CommandType.IMG,
+    "!web": CommandType.WEB,
     "!reload": CommandType.RELOAD,
 }
 
@@ -129,10 +131,10 @@ def parse_webhook_message(event: Dict[str, Any]) -> Optional[ParsedCommand]:
         quoted_message_id = message["quotedMessageId"]
         logger.debug(f"Detected quoted message: {quoted_message_id}")
     
-    # Sanitize the argument for !hej commands
-    if command_type == CommandType.HEJ:
+    # Sanitize the argument for !hej and !web commands
+    if command_type in (CommandType.HEJ, CommandType.WEB):
         argument = sanitize_prompt(argument)
-        
+
         # Check for prompt injection
         if injection_pattern := detect_prompt_injection(argument):
             logger.warning(

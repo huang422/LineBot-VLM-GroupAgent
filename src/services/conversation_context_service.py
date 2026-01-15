@@ -16,7 +16,7 @@ logger = get_logger("services.conversation_context")
 
 # Context storage: {group_id: deque of messages}
 _context_store: Dict[str, deque] = {}
-_MAX_MESSAGES_PER_GROUP = 5  # Keep last 5 messages per group
+_MAX_MESSAGES_PER_GROUP = 3  # Keep last 3 messages per group
 _CONTEXT_TTL_SECONDS = 3600  # 1 hour
 
 

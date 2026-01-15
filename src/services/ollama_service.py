@@ -104,6 +104,7 @@ class OllamaService:
         image_base64: Optional[str] = None,
         context_text: Optional[str] = None,
         conversation_history: Optional[str] = None,
+        web_search_results: Optional[str] = None,
     ) -> str:
         """
         Generate a response from the LLM.
@@ -114,6 +115,7 @@ class OllamaService:
             image_base64: Optional base64-encoded image for vision tasks
             context_text: Optional text context (e.g., quoted message)
             conversation_history: Optional conversation history for context
+            web_search_results: Optional web search results for augmented responses
 
         Returns:
             Generated response text
@@ -123,7 +125,7 @@ class OllamaService:
             OllamaInferenceError: If inference fails
         """
         # Build the full prompt with context
-        full_prompt = self._build_prompt(prompt, context_text, conversation_history)
+        full_prompt = self._build_prompt(prompt, context_text, conversation_history, web_search_results)
         
         # Build request payload
         payload = {
@@ -267,43 +269,55 @@ class OllamaService:
         self,
         prompt: str,
         context_text: Optional[str] = None,
-        conversation_history: Optional[str] = None
+        conversation_history: Optional[str] = None,
+        web_search_results: Optional[str] = None,
     ) -> str:
         """
-        Build the full prompt including context and conversation history.
+        Build the full prompt including context, conversation history, and web search.
+
+        The prompt is structured as:
+        1. User's current message (User message)
+        2. Referenced message (if exists)
+        3. Recent conversation history
+        4. Web search results (if exists)
 
         Args:
             prompt: User's question
             context_text: Optional context from quoted message
             conversation_history: Optional recent conversation history
+            web_search_results: Optional web search results
 
         Returns:
             Combined prompt string
         """
         parts = []
 
-        # Add user's current question
-        if parts:
-            parts.append(f"User's question: {prompt}")
-            return "\n".join(parts)
+        # 1. User's current message
+        parts.append(f"User's question: {prompt}")
 
-        # Add quoted message context (if available)
+        # 2. Add quoted message context (if available)
         if context_text:
+            parts.append("")
             parts.append("Referenced message:")
             parts.append("---")
             parts.append(context_text)
             parts.append("---")
-            parts.append("")
 
-        # Add conversation history first (if available)
+        # 3. Add conversation history (if available)
         if conversation_history:
+            parts.append("")
             parts.append("Recent conversation:")
             parts.append("---")
             parts.append(conversation_history)
             parts.append("---")
-            parts.append("")                          
 
-        return prompt
+        # 4. Add web search results (if available)
+        if web_search_results:
+            parts.append("")
+            parts.append("web search:")
+            parts.append(web_search_results)
+
+        return "\n".join(parts)
 
 
 # Global singleton instance

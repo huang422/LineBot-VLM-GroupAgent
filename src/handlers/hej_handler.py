@@ -8,13 +8,13 @@ Handles !hej commands by:
 4. Sending queue feedback to user
 """
 
-from typing import Dict, Any, Optional
+from typing import Dict, Any
 
 from src.handlers.command_handler import ParsedCommand, extract_event_context
 from src.models.llm_request import LLMRequest
 from src.models.prompt_config import DEFAULT_PROMPT_CONFIG
 from src.services.rate_limit_service import get_rate_limit_service
-from src.services.queue_service import get_queue_service, QueueFullError
+from src.services.queue_service import get_queue_service
 from src.services.line_service import get_line_service
 from src.services.message_cache_service import get_cached_message
 from src.services.conversation_context_service import get_context_as_text

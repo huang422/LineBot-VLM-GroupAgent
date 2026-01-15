@@ -8,16 +8,15 @@ FastAPI application with:
 - Startup/shutdown lifecycle management
 """
 
-import asyncio
 from contextlib import asynccontextmanager
 from typing import Dict, Any
 
 from fastapi import FastAPI, Request, HTTPException, Header
-from fastapi.responses import JSONResponse, FileResponse
+from fastapi.responses import JSONResponse
 from fastapi.staticfiles import StaticFiles
 from pathlib import Path
 
-from src.config import get_settings, Settings
+from src.config import get_settings
 from src.utils.logger import setup_logging, get_logger, LogContext
 from src.utils.validators import validate_line_signature
 
@@ -29,6 +28,7 @@ from src.services.rate_limit_service import get_rate_limit_service
 from src.services.image_service import download_and_process_image
 from src.services.drive_service import get_drive_service, close_drive_service
 from src.services.scheduler_service import get_scheduler_service, close_scheduler_service
+from src.services.web_search_service import close_web_search_service
 
 # Handlers
 from src.handlers.command_handler import (
@@ -39,6 +39,7 @@ from src.handlers.command_handler import (
 from src.handlers.hej_handler import handle_hej_command
 from src.handlers.reload_handler import handle_reload_command
 from src.handlers.img_handler import handle_img_command
+from src.handlers.web_handler import handle_web_command
 
 # Models
 from src.models.llm_request import LLMRequest
@@ -118,7 +119,15 @@ async def process_llm_request(request: LLMRequest) -> None:
             image_base64=image_base64,
             context_text=request.context_text,
             conversation_history=request.conversation_history,
+            web_search_results=request.web_search_results,
         )
+
+        # Helper to add bot response to conversation context
+        def add_bot_response_to_context():
+            settings = get_settings()
+            bot_user_id = "BOT_" + settings.line_channel_secret[:8]
+            add_context_message(request.group_id, bot_user_id, response_text, "text")
+            logger.debug("Added bot response to conversation context")
 
         # Try to use reply_token first (valid for ~60s), fallback to push message
         success = False
@@ -137,14 +146,7 @@ async def process_llm_request(request: LLMRequest) -> None:
                 if sent_message_id:
                     cache_message(sent_message_id, "text", sent_text)
                     logger.debug(f"Cached bot response: id={sent_message_id}")
-
-                # Add bot's response to conversation context
-                # Use a special user_id to identify bot messages
-                from src.config import get_settings
-                settings = get_settings()
-                bot_user_id = "BOT_" + settings.line_channel_secret[:8]
-                add_context_message(request.group_id, bot_user_id, response_text, "text")
-                logger.debug(f"Added bot response to conversation context")
+                add_bot_response_to_context()
 
         if not success:
             # Reply token expired or failed, use push message
@@ -157,12 +159,7 @@ async def process_llm_request(request: LLMRequest) -> None:
                     f"Response sent via push message",
                     extra={"request_id": request.request_id}
                 )
-                # Add bot's response to conversation context
-                from src.config import get_settings
-                settings = get_settings()
-                bot_user_id = "BOT_" + settings.line_channel_secret[:8]
-                add_context_message(request.group_id, bot_user_id, response_text, "text")
-                logger.debug(f"Added bot response to conversation context")
+                add_bot_response_to_context()
             else:
                 logger.error(
                     f"Failed to send response",
@@ -284,6 +281,7 @@ async def lifespan(app: FastAPI):
     await close_drive_service()
 
     # Close service connections
+    await close_web_search_service()
     await close_ollama_service()
     await close_line_service()
 
@@ -460,13 +458,16 @@ async def handle_webhook_event(event: Dict[str, Any]) -> None:
         user_id=context.get("user_id"),
         command=command.command_type.value,
     ):
-        # Route to appropriate handler!img 騎哈雷
+        # Route to appropriate handler
         if command.command_type == CommandType.HEJ:
             await handle_hej_command(command, event)
-        
+
         elif command.command_type == CommandType.IMG:
             await handle_img_command(command, event)
-        
+
+        elif command.command_type == CommandType.WEB:
+            await handle_web_command(command, event)
+
         elif command.command_type == CommandType.RELOAD:
             await handle_reload_command(command, event)
 

@@ -178,6 +178,14 @@ Be friendly but professional.""",
         description="LINE group ID for scheduled messages"
     )
 
+    # ==========================================================================
+    # Web Search Configuration (Tavily AI)
+    # ==========================================================================
+    tavily_api_key: Optional[str] = Field(
+        default=None,
+        description="Tavily API key for web search (!web command)"
+    )
+
 
 @lru_cache
 def get_settings() -> Settings:

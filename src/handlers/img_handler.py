@@ -6,7 +6,6 @@ in the image mapping and sending the corresponding image.
 """
 
 from typing import Dict, Any, Optional
-import base64
 import uuid
 from pathlib import Path
 
