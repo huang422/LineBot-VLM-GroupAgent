@@ -7,7 +7,6 @@
 [![Docker](https://img.shields.io/badge/Docker-Compose-2496ED.svg?logo=docker&logoColor=white)](https://docs.docker.com/compose/)
 [![Google Drive](https://img.shields.io/badge/Google%20Drive-API-4285F4.svg?logo=googledrive&logoColor=white)](https://developers.google.com/drive)
 [![APScheduler](https://img.shields.io/badge/APScheduler-3.10+-orange.svg)](https://apscheduler.readthedocs.io/)
-[![Tavily](https://img.shields.io/badge/Tavily-AI%20Search-5A67D8.svg)](https://tavily.com/)
 [![CUDA](https://img.shields.io/badge/NVIDIA-CUDA-76B900.svg?logo=nvidia&logoColor=white)](https://developer.nvidia.com/cuda-zone)
 [![Cloudflare](https://img.shields.io/badge/Cloudflare-Tunnel-F38020.svg?logo=cloudflare&logoColor=white)](https://www.cloudflare.com/)
 [![Buy Me A Coffee](https://img.shields.io/badge/Buy%20Me%20a%20Coffee-ffdd00?style=for-the-badge&logo=buy-me-a-coffee&logoColor=black)](https://www.buymeacoffee.com/huang422)
@@ -511,8 +510,8 @@ curl http://localhost:8000/health | jq
     },
     "conversation_context": {
       "groups_tracked": 5,
-      "total_messages": 12,
-      "max_messages_per_group": 3,
+      "total_messages": 23,
+      "max_messages_per_group": 5,
       "ttl_seconds": 3600
     }
   }
@@ -528,31 +527,6 @@ docker compose logs -f linebot
 # Production (JSON)
 LOG_LEVEL=INFO
 ```
-
----
-
-## Use Cases
-
-### 1. Technical Support Bot
-- System prompt: IT helpdesk assistant
-- Image mapping: VPN setup guides
-- Scheduled: Monday password reminders
-
-### 2. Educational Study Group
-- System prompt: Teaching assistant
-- Image mapping: Formula sheets
-- Vision: Homework problem solving
-
-### 3. Fitness Community
-- System prompt: Fitness coach
-- Image mapping: Workout plans
-- Scheduled: Weekly workout reminders
-
-### 4. Customer Service
-- System prompt: Support representative
-- Image mapping: Return policies
-- Vision: Product defect triage
-
 ---
 
 ## Advanced Topics
@@ -571,19 +545,6 @@ scheduler_service.add_weekly_message(
 )
 ```
 
-### Multi-Model Support
-
-```bash
-# Pull different models
-docker compose exec ollama ollama pull llama3.2-vision:11b
-
-# Update .env
-OLLAMA_MODEL=llama3.2-vision:11b
-
-# Restart
-docker compose restart linebot
-```
-
 ### Finding Group IDs
 
 ```bash
@@ -593,111 +554,11 @@ docker compose logs -f linebot | grep "groupId"
 # Send message in group, then:
 docker compose logs linebot | grep "Full event structure" | tail -1
 ```
-
----
-
-## Troubleshooting
-
-### Bot Not Responding
-
-```bash
-# Check webhook
-curl -X POST https://your-tunnel.trycloudflare.com/webhook \
-  -H "Content-Type: application/json" \
-  -d '{"events":[]}'
-
-# Check logs
-docker compose logs --tail=100 linebot
-```
-
-### Ollama Issues
-
-```bash
-# Verify model
-docker compose exec ollama ollama list
-
-# Re-pull
-docker compose exec ollama ollama pull gemma3:12b
-
-# Check GPU
-docker compose exec ollama nvidia-smi
-```
-
-### Drive Sync Failing
-
-```bash
-# Verify credentials
-docker compose exec linebot ls -la /app/credentials.json
-
-# Enable debug
-LOG_LEVEL=DEBUG
-docker compose restart linebot
-```
-
----
-
-### Architecture Decisions
-
-**Q: Why local Ollama vs cloud APIs?**
-- Cost: No per-request charges
-- Privacy: Data never leaves server
-- Latency: Sub-second with GPU
-- Offline: Works without internet
-
-**Q: Why sequential GPU processing?**
-- Prevents OOM on single-GPU systems
-- Predictable performance
-- Simple scaling (add workers for multi-GPU)
-
-**Q: Why Google Drive config?**
-- Non-technical users can edit prompts
-- Version control via Drive history
-- Zero-downtime reload
-- Automatic cloud backup
-
-### Technical Challenges Solved
-
-**1. Reply Token Expiration**
-- Problem: Tokens expire in ~60s
-- Solution: Try reply first, fallback to push
-- Code: `main.py:118-151`
-
-**2. GPU Memory Management**
-- Problem: Concurrent requests cause OOM crashes
-- Solution: Semaphore-based sequential processing
-- Code: `queue_service.py:55-60`
-
-**3. Image Format Compatibility**
-- Problem: LINE doesn't support HEIC
-- Solution: Auto-convert to JPEG
-- Code: `image_service.py:122-134`
-
-**4. Webhook Security**
-- Problem: Prevent spoofed requests
-- Solution: HMAC-SHA256 validation
-- Code: `validators.py:15-45`
-
-### Code Quality
-
-- **Async/Await:** Fully async (no blocking)
-- **Error Handling:** Custom exceptions
-- **Testing:** Health checks, structured logs
-- **Documentation:** README, specs, inline comments
-
 ---
 
 ## Additional Documentation
 
 - [Full Setup Guide (Chinese)](START.md)
-- [Feature Specification](specs/001-line-bot-ollama/spec.md)
-- [Implementation Plan](specs/001-line-bot-ollama/plan.md)
-
-### External Resources
-
-- [LINE Messaging API Docs](https://developers.line.biz/en/docs/messaging-api/)
-- [Ollama Python Client](https://github.com/ollama/ollama-python)
-- [FastAPI Documentation](https://fastapi.tiangolo.com/)
-- [Google Drive API v3](https://developers.google.com/drive/api/v3/about-sdk)
 
 ---
 
