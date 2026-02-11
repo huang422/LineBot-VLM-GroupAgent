@@ -2,7 +2,7 @@
 
 [![Python](https://img.shields.io/badge/Python-3.11+-blue.svg?logo=python&logoColor=white)](https://www.python.org/)
 [![FastAPI](https://img.shields.io/badge/FastAPI-0.109+-009688.svg?logo=fastapi&logoColor=white)](https://fastapi.tiangolo.com/)
-[![Ollama](https://img.shields.io/badge/Ollama-gemma3:12b-000000.svg?logo=ollama&logoColor=white)](https://ollama.ai/)
+[![Ollama](https://img.shields.io/badge/Ollama-qwen3--vl:8b-000000.svg?logo=ollama&logoColor=white)](https://ollama.ai/)
 [![LINE](https://img.shields.io/badge/LINE-Messaging%20API-00C300.svg?logo=line&logoColor=white)](https://developers.line.biz/)
 [![Docker](https://img.shields.io/badge/Docker-Compose-2496ED.svg?logo=docker&logoColor=white)](https://docs.docker.com/compose/)
 [![Google Drive](https://img.shields.io/badge/Google%20Drive-API-4285F4.svg?logo=googledrive&logoColor=white)](https://developers.google.com/drive)
@@ -11,7 +11,7 @@
 [![Cloudflare](https://img.shields.io/badge/Cloudflare-Tunnel-F38020.svg?logo=cloudflare&logoColor=white)](https://www.cloudflare.com/)
 [![Buy Me A Coffee](https://img.shields.io/badge/Buy%20Me%20a%20Coffee-ffdd00?style=for-the-badge&logo=buy-me-a-coffee&logoColor=black)](https://www.buymeacoffee.com/huang422)
 
-A **production-ready LINE group chatbot** powered by local **Ollama Vision-Language Models (VLM)**, enabling AI conversations and image analysis without cloud API dependencies. Built with **FastAPI** and enterprise-level architecture: async queue management, rate limiting, Google Drive integration, GPU-optimized inference, and scheduled messaging.
+A **production-ready LINE group chatbot** powered by local **Ollama Vision-Language Model (qwen3-vl:8b)**, enabling AI conversations, image analysis, and web search without cloud API dependencies. Features reasoning model support with streaming, automatic simplified→traditional Chinese conversion, time-aware responses, and guaranteed reply mechanisms.
 
 ---
 
@@ -19,14 +19,18 @@ A **production-ready LINE group chatbot** powered by local **Ollama Vision-Langu
 
 ### Core Capabilities
 
-- **AI Conversations** - Natural language Q&A powered by local Ollama LLM (gemma3:12b)
-- **Web Search + AI** - Real-time web search with Tavily AI, results fed to LLM for informed answers
+- **AI Conversations** - Natural language Q&A powered by local Ollama reasoning model (qwen3-vl:8b)
+- **Vision Analysis** - Reply to images for instant multimodal analysis with optimized lightweight prompts
+- **Auto Web Search** - LLM-driven search classification: automatically determines if a question needs real-time web data
+- **Manual Web Search** - `!web` command for explicit web search + AI response via Tavily AI
 - **Conversation Context** - Automatic tracking of last 3 messages per group for contextual responses
-- **Vision Analysis** - Reply to images with questions for instant multimodal analysis
+- **Reasoning Model Support** - Native Ollama thinking/response field separation with think content fallback
+- **Traditional Chinese Enforcement** - All output forced to 繁體中文 via OpenCC (simplified→traditional conversion)
+- **Time Awareness** - Current Taiwan date/time injected into every prompt (no extra API calls)
+- **Guaranteed Reply** - Every request gets a response: reply_token → push_message → think fallback → error notification
 - **Smart Image Retrieval** - Keyword-based image search from Google Drive
 - **Scheduled Messages** - Cron-based recurring notifications (APScheduler)
 - **Live Configuration** - Google Drive sync for prompts and image mappings
-- **Production Architecture** - Async queue, rate limiting, health checks, structured logging
 
 ### Architecture at a Glance
 
@@ -48,9 +52,14 @@ A **production-ready LINE group chatbot** powered by local **Ollama Vision-Langu
 ┌──────────────────┐   ┌──────────────────────┐
 │  LLM Pipeline    │   │  Image/Config Sync   │
 │  ├─ Rate Limiter │   │  ├─ Google Drive API │
-│  ├─ Queue System │   │  ├─ Local Cache      │
-│  ├─ GPU Inference│   │  └─ Auto-reload      │
-│  └─ Response     │   └──────────────────────┘
+│  ├─ Auto Search  │   │  ├─ Local Cache      │
+│  ├─ Queue System │   │  └─ Auto-reload      │
+│  ├─ GPU Inference│   └──────────────────────┘
+│  │  (streaming)  │
+│  ├─ Think Filter │
+│  ├─ S2T Convert  │
+│  └─ Guaranteed   │
+│     Reply        │
 └──────────────────┘
 ```
 
@@ -59,17 +68,19 @@ A **production-ready LINE group chatbot** powered by local **Ollama Vision-Langu
 | Component | Technology | Purpose |
 |-----------|-----------|---------|
 | **Web Framework** | FastAPI + Uvicorn | Async API server with webhook handling |
-| **LLM Engine** | Ollama (gemma3:12b) | Local GPU-accelerated inference (12B params) |
+| **LLM Engine** | Ollama (qwen3-vl:8b) | Local GPU-accelerated reasoning VLM with vision |
 | **Web Search** | Tavily AI | Real-time web search for LLM augmentation |
+| **Auto Search** | LLM Classification | Two-stage (keyword + LLM) search need detection |
 | **Messaging** | LINE Messaging API | User interaction and webhook events |
 | **Configuration** | Google Drive API | Collaborative prompt/image management |
-| **Queue** | asyncio.Queue | Sequential GPU request processing |
+| **Queue** | asyncio.Queue | Sequential GPU request processing with timeout |
 | **Rate Limiting** | Sliding window | 30 req/min per user (configurable) |
 | **Scheduling** | APScheduler | Recurring message delivery |
-| **Image Processing** | Pillow + pillow-heif | HEIC/PNG to JPEG conversion |
+| **Image Processing** | Pillow + pillow-heif | Resize (max 800px), min 64px, HEIC/PNG→JPEG |
+| **Chinese Conversion** | OpenCC | Forced simplified→traditional Chinese output |
 | **Deployment** | Docker Compose | Multi-container orchestration |
 | **Tunnel** | Cloudflare Tunnel | Public HTTPS webhook endpoint |
-| **GPU** | NVIDIA CUDA | RTX 4080 (or compatible) |
+| **GPU** | NVIDIA CUDA | RTX 4080 (9GB VRAM limit via OLLAMA_MAX_VRAM) |
 
 ---
 
@@ -102,12 +113,11 @@ LINE_CHANNEL_ACCESS_TOKEN=your_token_here
 # Start all services (linebot + ollama + cloudflared)
 docker compose up -d
 
-# Pull the LLM model (first time only, ~2.5GB)
-docker compose exec ollama ollama pull gemma3:12b
+# Pull the VLM model (first time only, ~5GB)
+docker compose exec ollama ollama pull qwen3-vl:8b
 
 # Get the public webhook URL
 docker compose logs cloudflared | grep trycloudflare.com
-# Example output: https://random-subdomain.trycloudflare.com
 ```
 
 ### 3. Configure LINE Webhook
@@ -122,8 +132,9 @@ docker compose logs cloudflared | grep trycloudflare.com
 
 Add the bot to a LINE group:
 ```
-!hej What is machine learning?
-!web 2026 AI trends
+!hej 你好，今天星期幾？
+!hej 請解釋什麼是機器學習
+!web 2026 AI 最新趨勢
 !img architecture
 !reload
 ```
@@ -136,8 +147,30 @@ Add the bot to a LINE group:
 
 **Text Questions:**
 ```
-!hej What is the capital of France?
-!hej Explain quantum computing simply
+!hej 台灣的首都是哪裡？
+!hej 用 Python 寫一個斐波那契數列
+!hej 現在幾點？  →  Bot knows current Taiwan time
+```
+
+**Auto Web Search** (Automatic):
+```
+!hej 今天台積電股價多少？  →  Auto-detects need for web search
+!hej 台北現在幾度？         →  Triggers keyword-based fast search
+!hej Python 怎麼寫迴圈？   →  No search needed, answers directly
+```
+
+**Vision Analysis** (Reply to images):
+```
+1. User sends an image in the chat
+2. Reply to that image with: !hej 這張圖片裡有什麼？
+3. Bot analyzes with lightweight VLM prompt (~2-3s)
+```
+
+**Context Mode** (Reply to text):
+```
+1. User says: "我在學 Python"
+2. Reply: !hej 有什麼好的學習資源？
+3. Bot includes quoted text as context
 ```
 
 **Contextual Conversations** (Automatic):
@@ -145,49 +178,28 @@ Add the bot to a LINE group:
 User A: "今天天氣真好"
 User B: "要不要去打球?"
 User A: "!hej 幾點集合?"
-→ Bot automatically sees last 3 messages and understands the context
-```
-
-**Vision Analysis** (Reply to images):
-```
-1. User sends an image
-2. Reply with: !hej Describe this image
-3. Bot analyzes and responds
-```
-
-**Context Mode** (Reply to text):
-```
-1. User says: "I'm learning Python"
-2. Reply: !hej What are good resources?
-3. Bot includes quoted text as context
+→ Bot sees last 3 messages, understands the basketball context
 ```
 
 **Smart Keyword** (Auto-delegates to !img):
 ```
-!hej architecture  →  Sends architecture diagram
+!hej 騎哈雷  →  If keyword matches image_map, sends image directly
 ```
 
 ### `!img [keyword]` - Image Retrieval
 
 ```
 !img architecture    # Diagram from Google Drive
-!img workflow       # Workflow chart
-```
-
-Error handling:
-```
-Keyword "xyz" not found.
-Available: architecture, workflow, diagram...
+!img 騎哈雷          # Image mapped to keyword
 ```
 
 ### `!web [query]` - Web Search + AI Response
 
-Searches the web using Tavily AI, then feeds results to the LLM for an informed response.
+Explicit web search using Tavily AI, results fed to LLM.
 
-**Basic Search:**
 ```
 !web 台灣今天新聞
-!web latest iPhone 16 specs
+!web latest iPhone specs
 !web Python 3.12 new features
 ```
 
@@ -202,10 +214,7 @@ Searches the web using Tavily AI, then feeds results to the LLM for an informed 
 
 ### `!reload` - Force Config Refresh
 
-Manually triggers:
-- System prompt reload from Drive
-- Image mapping reload
-- Cache refresh
+Manually triggers system prompt and image mapping reload from Google Drive.
 
 ---
 
@@ -219,19 +228,28 @@ LINE_CHANNEL_SECRET=your_secret
 LINE_CHANNEL_ACCESS_TOKEN=your_token
 ```
 
+**Optional - Ollama Model:**
+```bash
+OLLAMA_MODEL=qwen3-vl:8b              # Reasoning VLM model
+OLLAMA_BASE_URL=http://localhost:11434 # Ollama API endpoint
+OLLAMA_NUM_PREDICT=4096                # Max tokens (thinking + response)
+OLLAMA_TEMPERATURE=0.7                 # Creativity (0=deterministic)
+OLLAMA_NUM_CTX=8192                    # Context window (8192 for image support)
+```
+
 **Optional - Performance:**
 ```bash
-RATE_LIMIT_MAX_REQUESTS=30          # Per-user quota
+RATE_LIMIT_MAX_REQUESTS=30          # Per-user quota per window
 RATE_LIMIT_WINDOW_SECONDS=60        # Window duration
 QUEUE_MAX_SIZE=10                   # Max pending requests
-QUEUE_TIMEOUT_SECONDS=120           # Request timeout
+QUEUE_TIMEOUT_SECONDS=180           # Request timeout (allows longer thinking)
 ```
 
 **Optional - Google Drive:**
 ```bash
 GOOGLE_SERVICE_ACCOUNT_FILE=/app/credentials.json
 DRIVE_FOLDER_ID=your_folder_id
-DRIVE_SYNC_INTERVAL_SECONDS=45      # 30-120s range
+DRIVE_SYNC_INTERVAL_SECONDS=120     # 30-120s range
 ```
 
 **Optional - Server:**
@@ -240,48 +258,17 @@ PUBLIC_BASE_URL=https://your-tunnel.trycloudflare.com  # Required for !img
 LOG_LEVEL=INFO                      # DEBUG/INFO/WARNING/ERROR
 ```
 
+**Optional - Web Search (Tavily AI):**
+```bash
+TAVILY_API_KEY=tvly-xxxxxxxxxxxxx          # Get from tavily.com (free 1000/month)
+AUTO_WEB_SEARCH_ENABLED=true               # LLM auto-detects search needs
+WEB_SEARCH_MONTHLY_QUOTA=950               # Safety margin below API limit
+```
+
 **Optional - Scheduled Messages:**
 ```bash
 SCHEDULED_MESSAGES_ENABLED=true
-SCHEDULED_GROUP_ID=C1234567890abcdef...  # Get from logs
-```
-
-**Optional - Web Search (Tavily AI):**
-```bash
-TAVILY_API_KEY=tvly-xxxxxxxxxxxxx   # Get from tavily.com (free 1000/month)
-```
-
-### Google Drive Setup
-
-Create this folder structure:
-```
-AI-LineBot Config/
-├── system_prompt.md (google doc)   # LLM instructions
-├── image_map.json (google sheet)   # Keyword mappings
-└── images/
-    ├── architecture.png
-    └── workflow.jpg
-```
-
-**system_prompt.md:**
-```markdown
-You are a helpful AI assistant in a LINE group chat.
-Respond concisely in the user's language.
-Be friendly but professional.
-```
-
-**image_map.json:**
-```json
-{
-  "mappings": [
-    {
-      "keyword": "architecture",
-      "filename": "architecture.png",
-      "file_id": "1ABC...XYZ"
-    }
-  ],
-  "version": "1.0"
-}
+SCHEDULED_GROUP_ID=C1234567890abcdef...    # Get from webhook logs
 ```
 
 ---
@@ -292,83 +279,113 @@ Be friendly but professional.
 
 ```
 src/
-├── models/              # Pydantic data models
-│   ├── llm_request.py
-│   ├── prompt_config.py
-│   └── image_mapping.py
-├── services/            # Business logic (singleton)
-│   ├── line_service.py
-│   ├── ollama_service.py
-│   ├── drive_service.py
-│   ├── queue_service.py
-│   ├── scheduler_service.py
-│   ├── message_cache_service.py
-│   ├── conversation_context_service.py  # Context tracking (last 3 msgs)
-│   └── web_search_service.py            # Tavily AI web search
-├── handlers/            # Command routing
-│   ├── hej_handler.py
-│   ├── img_handler.py
-│   ├── web_handler.py   # !web command
-│   └── reload_handler.py
-└── utils/               # Helpers
-    ├── logger.py
-    └── validators.py
+├── models/                              # Pydantic data models
+│   ├── llm_request.py                   # LLM request with multimodal support
+│   ├── prompt_config.py                 # System prompt configuration
+│   └── image_mapping.py                 # Image keyword mappings
+├── services/                            # Business logic (singletons)
+│   ├── ollama_service.py                # Streaming inference, think filter, S2T, time injection
+│   ├── line_service.py                  # LINE API (reply/push/loading animation)
+│   ├── queue_service.py                 # Async queue with guaranteed notifications
+│   ├── drive_service.py                 # Google Drive sync
+│   ├── image_service.py                 # Image resize (64-800px), base64 encoding
+│   ├── rate_limit_service.py            # Per-user sliding window
+│   ├── scheduler_service.py             # APScheduler cron jobs
+│   ├── message_cache_service.py         # Quote/reply message cache
+│   ├── conversation_context_service.py  # Last 3 messages per group
+│   └── web_search_service.py            # Tavily AI with monthly quota
+├── handlers/                            # Command routing
+│   ├── command_handler.py               # !prefix parsing + quote detection
+│   ├── hej_handler.py                   # !hej (auto search + image keyword)
+│   ├── img_handler.py                   # !img image retrieval
+│   ├── web_handler.py                   # !web explicit search
+│   └── reload_handler.py               # !reload Drive sync
+└── utils/
+    ├── logger.py                        # Structured logging with context
+    └── validators.py                    # Signature, sanitization, injection detection
 ```
 
-### Design Patterns
+### Key Design Decisions
 
-**Singleton Services:**
-```python
-from src.services.line_service import get_line_service
-line_service = get_line_service()  # Global instance
+**Reasoning Model with Streaming:**
+```
+Ollama qwen3-vl:8b returns two separate JSON fields:
+  - "thinking": internal reasoning (hidden from user)
+  - "response": final answer (shown to user)
+
+Stream processing reads both fields in real-time.
+No manual <think> tag parsing needed.
 ```
 
-**Async Queue:**
-```python
-# Handler enqueues
-request = LLMRequest(...)
-queue_service.try_enqueue_nowait(request)
-
-# Worker processes sequentially
-await process_llm_request(request)
+**Guaranteed Reply Mechanism:**
+```
+1. Queue worker processes request with timeout (180s)
+2. On success: reply_token (FREE) → push_message (fallback)
+3. On timeout: queue sends notification directly
+4. On empty response: extract conclusion from think content
+5. On exception: error message via reply/push
+→ Every code path sends a user-visible response
 ```
 
-**Rate Limiting:**
+**Image Analysis Optimization:**
+```
+Text requests:  full system prompt + context + history (~2000 tokens)
+Image requests: minimal prompt + /no_think (~500 tokens)
+
+Images are resized to max 800px (saves ~1000 prompt tokens vs 1920px)
+Minimum 64px enforced (qwen3-vl crashes on < 32px)
+```
+
+**Simplified → Traditional Chinese:**
 ```python
-allowed, reset, remaining = await rate_limit_service.check_and_record(user_id)
-if not allowed:
-    return f"Rate limit exceeded. Retry in {reset}s"
+from opencc import OpenCC
+_s2t = OpenCC('s2t')
+
+# Applied at ALL return points in generate()
+return _s2t.convert(response_text)  # 这张图片 → 這張圖片
+```
+
+**Time Awareness:**
+```
+Every request's system prompt starts with:
+"現在時間：2026-02-11 星期二 12:20"
+
+~10 tokens overhead, zero API calls.
+Model can answer "今天星期幾？" without web search.
 ```
 
 ### Data Flow (!hej)
 
 ```
-1. LINE webhook → FastAPI
-2. Signature validation (HMAC-SHA256)
-3. Message saved to conversation context (last 3/group)
-4. Command parsing
-5. Rate limit check
-6. Context retrieval (recent conversation history)
-7. Queue enqueue with context
-8. Background worker
-9. Ollama GPU inference (with context in prompt)
-10. LINE response
-11. Bot response saved to context
+1.  LINE webhook → FastAPI
+2.  Signature validation (HMAC-SHA256)
+3.  Message cached + added to conversation context
+4.  Command parsing (!hej + quoted message detection)
+5.  Rate limit check
+6.  Image keyword check (auto-delegates to !img if match)
+7.  Auto web search classification (keyword → LLM two-stage)
+8.  Web search via Tavily (if needed)
+9.  LLM request enqueued with context + search results
+10. Queue worker processes (180s timeout)
+11. Loading animation sent (FREE)
+12. Ollama streaming inference (thinking + response fields)
+13. OpenCC simplified → traditional Chinese conversion
+14. Reply via reply_token (FREE) → push_message (fallback)
+15. Bot response saved to conversation context
 ```
 
-### Data Flow (!web)
+### Data Flow (Image Analysis)
 
 ```
-1. LINE webhook → FastAPI
-2. Signature validation (HMAC-SHA256)
-3. Command parsing (!web query)
-4. Rate limit check
-5. Tavily AI web search (3 results, max 400 chars each)
-6. Context retrieval (conversation history)
-7. Queue enqueue with web search results + context
-8. Background worker
-9. Ollama GPU inference (search results + context in prompt)
-10. LINE response
+1.  User sends image → cached with message_id
+2.  User replies to image with "!hej 這是什麼？"
+3.  Quoted message_id found in cache (type=image)
+4.  Image downloaded from LINE Content API
+5.  Resized to max 800px, min 64px, JPEG encoded
+6.  Lightweight system prompt: "你是圖片分析助手..."
+7.  /no_think directive for direct analysis
+8.  Ollama inference (~2-3s for images)
+9.  OpenCC conversion + reply
 ```
 
 ---
@@ -385,103 +402,7 @@ if not allowed:
 - **Non-Root Container** - Docker runs as `appuser`
 - **Secret Management** - `.gitignore` excludes credentials
 - **Timeout Enforcement** - All external APIs have limits
-
----
-
-## Conversation Context System
-
-### How It Works
-
-The bot automatically tracks the **last 3 messages** in each group to provide contextual responses. This happens transparently without any user action needed.
-
-#### Technical Implementation
-
-**1. Message Storage**
-```python
-# Every incoming message is automatically saved
-add_context_message(group_id, user_id, message_text, message_type)
-
-# Uses deque with maxlen=3 (memory-efficient)
-# Older messages are automatically discarded
-```
-
-**2. Context Retrieval**
-When a user sends `!hej` or `!web`, the bot:
-```python
-# Gets last 3 messages for this group
-conversation_history = get_context_as_text(group_id, max_messages=3)
-
-# Example output:
-# User_U111: 今天天氣真好
-# User_U222: 要不要去打球?
-# Bot: 聽起來不錯!
-```
-
-**3. Prompt Construction**
-The context is integrated into the LLM prompt:
-```
-User's question: 幾點集合?
-
-Recent conversation:
----
-User_U111: 今天天氣真好
-User_U222: 要不要去打球?
-Bot: 聽起來不錯!
----
-```
-
-This allows the LLM to understand that "幾點集合?" is about the earlier basketball discussion.
-
-### Features
-
-- **Automatic**: No special commands needed
-- **Group-Isolated**: Each group has independent context
-- **Memory-Efficient**: Max 3 messages × ~200 bytes = ~600 bytes per group
-- **TTL**: Messages expire after 1 hour
-- **Zero Cost**: No LINE API calls (pure memory operations)
-
-### Monitoring Context
-
-**View in Docker logs:**
-```bash
-# See context updates in real-time
-docker compose logs -f linebot | grep "Current context"
-
-# View context used for LLM requests
-docker compose logs -f linebot | grep "Conversation history"
-```
-
-**Example log output:**
-```
-[INFO] conversation_context: 📝 Current context for group C1234567... (3 messages):
-  1. User_U111: 今天天氣真好
-  2. User_U222: 要不要去打球?
-  3. Bot: 聽起來不錯!
-```
-
-**Health endpoint stats:**
-```bash
-curl http://localhost:8000/health | jq '.services.conversation_context'
-```
-
-Output:
-```json
-{
-  "groups_tracked": 5,
-  "total_messages": 12,
-  "max_messages_per_group": 3,
-  "ttl_seconds": 3600
-}
-```
-
-### Supported Message Types
-
-| Type | Storage | Display in Context |
-|------|---------|-------------------|
-| Text | Full content | `User_xxx: 訊息內容` |
-| Image | Metadata only | `User_xxx: [發送了圖片]` |
-| Sticker | Metadata only | `User_xxx: [發送了貼圖]` |
-| Bot Reply | Full content | `Bot: 回覆內容` |
+- **VRAM Limit** - `OLLAMA_MAX_VRAM=9GB` prevents GPU OOM
 
 ---
 
@@ -499,34 +420,42 @@ curl http://localhost:8000/health | jq
   "status": "healthy",
   "services": {
     "ollama": "up",
-    "queue": {"size": 2, "processed": 127, "errors": 3},
-    "drive": {"configured": true, "cache_hits": 112},
-    "scheduler": {
-      "running": true,
-      "jobs": [{
-        "id": "monday_reminder",
-        "next_run": "2026-01-19T21:00:00+08:00"
-      }]
-    },
-    "conversation_context": {
-      "groups_tracked": 5,
-      "total_messages": 23,
-      "max_messages_per_group": 5,
-      "ttl_seconds": 3600
-    }
+    "queue": {"current_size": 0, "max_size": 10, "total_processed": 127, "total_errors": 3},
+    "rate_limit": {"active_trackers": 5, "max_requests": 30, "window_seconds": 60},
+    "drive": {"is_configured": true, "prompt_version": 1, "image_mappings": 3},
+    "scheduler": {"running": true, "job_count": 2},
+    "conversation_context": {"groups_tracked": 5, "total_messages": 12, "max_messages_per_group": 3},
+    "web_search_quota": {"month": "2026-02", "used": 15, "quota": 950, "remaining": 935}
   }
 }
 ```
 
-### Logging
+### Useful Commands
 
 ```bash
-# Development (human-readable)
-docker compose logs -f linebot
+# View all service logs
+docker compose logs -f
 
-# Production (JSON)
-LOG_LEVEL=INFO
+# View specific service
+docker compose logs -f linebot
+docker compose logs -f ollama
+
+# Check GPU usage
+nvidia-smi
+
+# Check Ollama truncation warnings
+docker compose logs ollama | grep truncat
+
+# Monitor conversation context
+docker compose logs -f linebot | grep "Conversation history"
+
+# View scheduler jobs
+curl -s http://localhost:8000/health | jq '.services.scheduler'
+
+# Find group IDs
+docker compose logs linebot | grep -o '"groupId": "[^"]*"' | sort -u
 ```
+
 ---
 
 ## Advanced Topics
@@ -537,28 +466,34 @@ Edit `main.py`:
 ```python
 scheduler_service.add_weekly_message(
     job_id="friday_reminder",
-    day_of_week="fri",      # mon/tue/wed/thu/fri/sat/sun
-    hour=18,                # 24-hour format
-    minute=30,
+    day_of_week="fri",
+    hour=18, minute=30,
     group_id=settings.scheduled_group_id,
     message="Weekend workout?",
 )
 ```
 
-### Finding Group IDs
+### Google Drive Setup
 
-```bash
-# Monitor in real-time
-docker compose logs -f linebot | grep "groupId"
-
-# Send message in group, then:
-docker compose logs linebot | grep "Full event structure" | tail -1
+Create this folder structure:
 ```
+AI-LineBot Config/
+├── system_prompt (Google Docs)      # LLM instructions
+├── image_map (Google Sheets)        # keyword → filename mappings
+└── images/
+    ├── architecture.png
+    └── workflow.jpg
+```
+
+**Important:** Add `必須使用繁體中文回覆，禁止輸出簡體中文字。` to your system prompt in Google Docs to enforce traditional Chinese at the LLM level as well.
+
 ---
 
 ## Additional Documentation
 
 - [Full Setup Guide (Chinese)](START.md)
+- [LINE Message Quota](https://manager.line.biz/)
+- [Tavily Search Quota](https://app.tavily.com/home)
 
 ---
 
@@ -567,6 +502,7 @@ docker compose logs linebot | grep "Full event structure" | tail -1
 This project is available for educational and portfolio demonstration purposes.
 
 ## Contact
+
 For questions, issues, or collaboration inquiries:
 
 - Developer: Tom Huang

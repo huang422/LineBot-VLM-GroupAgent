@@ -8,6 +8,7 @@ FastAPI application with:
 - Startup/shutdown lifecycle management
 """
 
+import json
 from contextlib import asynccontextmanager
 from typing import Dict, Any
 
@@ -28,7 +29,7 @@ from src.services.rate_limit_service import get_rate_limit_service
 from src.services.image_service import download_and_process_image
 from src.services.drive_service import get_drive_service, close_drive_service
 from src.services.scheduler_service import get_scheduler_service, close_scheduler_service
-from src.services.web_search_service import close_web_search_service
+from src.services.web_search_service import close_web_search_service, get_web_search_service
 
 # Handlers
 from src.handlers.command_handler import (
@@ -56,13 +57,19 @@ logger = get_logger("main")
 async def process_llm_request(request: LLMRequest) -> None:
     """
     Process a queued LLM request.
-    
-    This is the callback registered with the queue service worker.
-    Handles the actual Ollama inference and LINE response.
+
+    Strategy:
+    1. Send loading animation immediately (FREE, user sees typing indicator)
+    2. Run LLM inference (with smart think/no_think routing for speed)
+    3. When complete: try reply_token first (FREE), fallback to push_message
+
+    With /no_think mode, most responses complete in 5-15s, well within
+    the ~30s reply_token window. No need to waste reply_token on
+    intermediate "thinking" messages.
     """
     line_service = get_line_service()
     ollama_service = get_ollama_service()
-    
+
     logger.info(
         f"Processing LLM request",
         extra={
@@ -71,29 +78,33 @@ async def process_llm_request(request: LLMRequest) -> None:
             "has_image": request.is_multimodal,
         }
     )
-    
+
+    # Send loading animation (FREE, shows typing indicator to users)
+    try:
+        await line_service.send_loading_animation(request.user_id, loading_seconds=60)
+    except Exception:
+        pass  # Non-critical, continue processing
+
     try:
         # Check if we need to download an image for multimodal request
         image_base64 = request.context_image_base64
-        
+
         # Handle quoted image
         # Scenario 1: Bot-sent image (URL cached)
         if hasattr(request, "_quoted_image_url") and request._quoted_image_url:
             logger.debug(f"Loading bot-sent image from URL: {request._quoted_image_url}")
             try:
-                # Download image from our own server
                 import httpx
                 from io import BytesIO
                 from src.services.image_service import process_image_bytes
 
                 async with httpx.AsyncClient() as client:
                     response = await client.get(
-                        request._quoted_image_url, 
+                        request._quoted_image_url,
                         timeout=30.0,
                         follow_redirects=True
                     )
                     if response.status_code == 200:
-                        # Process the image
                         image_io = BytesIO(response.content)
                         image_base64 = process_image_bytes(image_io)
                         logger.info("Bot-sent image loaded and processed successfully")
@@ -101,17 +112,46 @@ async def process_llm_request(request: LLMRequest) -> None:
                         logger.warning(f"Failed to load bot-sent image: HTTP {response.status_code}")
             except Exception as e:
                 logger.error(f"Error loading bot-sent image: {e}", exc_info=True)
-        
+
         # Scenario 2: User-sent image (Download from LINE)
         elif hasattr(request, "_quoted_image_message_id") and request._quoted_image_message_id:
             logger.debug(f"Downloading quoted user image: {request._quoted_image_message_id}")
-            # Use original download logic for user images
             image_base64 = await download_and_process_image(request._quoted_image_message_id)
             if image_base64:
                 logger.info("User quoted image downloaded and processed successfully")
             else:
                 logger.warning("Failed to download quoted user image")
-        
+
+        # Auto web search: runs here (not in hej_handler) to preserve reply_token time.
+        # classify + search takes 5-20s; doing it before enqueue wastes the ~30s window.
+        web_search_results = request.web_search_results
+        if not image_base64 and not web_search_results:
+            settings = get_settings()
+            if settings.auto_web_search_enabled and settings.tavily_api_key:
+                web_search_service = get_web_search_service()
+                if web_search_service.is_quota_available:
+                    try:
+                        needs_search = await ollama_service.classify_needs_search(request.prompt)
+                        if needs_search:
+                            logger.info(f"Auto search triggered for: {request.prompt[:50]}...")
+                            from src.services.web_search_service import WebSearchError
+                            try:
+                                search_response = await web_search_service.search(
+                                    query=request.prompt, max_results=3,
+                                )
+                                if search_response.has_results:
+                                    web_search_results = search_response.to_context_text()
+                                    logger.info(
+                                        f"Auto search results: {len(search_response.results)} results, "
+                                        f"quota remaining: {web_search_service.quota_remaining}"
+                                    )
+                            except WebSearchError as e:
+                                logger.warning(f"Auto search failed (non-critical): {e}")
+                    except Exception as e:
+                        logger.warning(f"Auto search classification failed (non-critical): {e}")
+                else:
+                    logger.info("Auto search skipped: monthly quota exhausted")
+
         # Call Ollama for inference
         response_text = await ollama_service.generate(
             prompt=request.prompt,
@@ -119,7 +159,7 @@ async def process_llm_request(request: LLMRequest) -> None:
             image_base64=image_base64,
             context_text=request.context_text,
             conversation_history=request.conversation_history,
-            web_search_results=request.web_search_results,
+            web_search_results=web_search_results,
         )
 
         # Helper to add bot response to conversation context
@@ -129,32 +169,31 @@ async def process_llm_request(request: LLMRequest) -> None:
             add_context_message(request.group_id, bot_user_id, response_text, "text")
             logger.debug("Added bot response to conversation context")
 
-        # Try to use reply_token first (valid for ~60s), fallback to push message
-        success = False
+        # Guaranteed reply: try reply_token (FREE) → fallback push_message
+        sent = False
         if request.reply_token:
-            # Try reply first (faster and doesn't count against rate limits)
             success, sent_message_id, sent_text = await line_service.reply_text(
                 reply_token=request.reply_token,
                 text=response_text,
             )
             if success:
                 logger.info(
-                    f"Response sent via reply_token",
+                    f"Response sent via reply_token (FREE)",
                     extra={"request_id": request.request_id}
                 )
-                # Cache the bot's response for potential future quotes
                 if sent_message_id:
                     cache_message(sent_message_id, "text", sent_text)
                     logger.debug(f"Cached bot response: id={sent_message_id}")
                 add_bot_response_to_context()
+                sent = True
 
-        if not success:
-            # Reply token expired or failed, use push message
-            success = await line_service.push_text(
+        if not sent:
+            # reply_token expired or failed, use push message
+            push_success = await line_service.push_text(
                 to=request.group_id,
                 text=response_text,
             )
-            if success:
+            if push_success:
                 logger.info(
                     f"Response sent via push message",
                     extra={"request_id": request.request_id}
@@ -162,7 +201,7 @@ async def process_llm_request(request: LLMRequest) -> None:
                 add_bot_response_to_context()
             else:
                 logger.error(
-                    f"Failed to send response",
+                    f"CRITICAL: Failed to send response via both reply and push",
                     extra={"request_id": request.request_id}
                 )
 
@@ -173,17 +212,21 @@ async def process_llm_request(request: LLMRequest) -> None:
             exc_info=True
         )
 
-        # Try to notify user of error (use reply_token if available, otherwise push)
+        # Guaranteed error notification: try reply_token first, then push
+        error_msg = "❌ 處理請求時發生錯誤，請稍後再試。"
         try:
+            sent = False
             if request.reply_token:
-                await line_service.reply_text(
+                success, _, _ = await line_service.reply_text(
                     reply_token=request.reply_token,
-                    text="❌ 處理請求時發生錯誤，請稍後再試。",
+                    text=error_msg,
                 )
-            else:
+                sent = success
+
+            if not sent:
                 await line_service.push_text(
                     to=request.group_id,
-                    text="❌ 處理請求時發生錯誤，請稍後再試。",
+                    text=error_msg,
                 )
         except Exception:
             pass  # Best effort notification
@@ -249,7 +292,7 @@ async def lifespan(app: FastAPI):
             message="明天操一下嗎?",
         )
 
-        # 排程 2: 每週五下午 6:30
+        # 排程 2: 每週一晚上 9:30
         scheduler_service.add_weekly_message(
             job_id="pineapple_workout_reminder",
             day_of_week="mon",
@@ -328,6 +371,7 @@ async def health_check():
     rate_limit_service = get_rate_limit_service()
     drive_service = get_drive_service()
     scheduler_service = get_scheduler_service()
+    web_search_service = get_web_search_service()
 
     ollama_healthy = await ollama_service.health_check()
 
@@ -340,6 +384,7 @@ async def health_check():
             "drive": drive_service.get_stats(),
             "scheduler": scheduler_service.get_stats(),
             "conversation_context": get_context_stats(),
+            "web_search_quota": web_search_service.get_quota_stats(),
         }
     })
 
@@ -368,7 +413,6 @@ async def webhook(
     
     # Parse JSON body
     try:
-        import json
         body_json = json.loads(body.decode('utf-8'))
         logger.debug(f"Parsed webhook body: {len(body_json.get('events', []))} events")
     except Exception as e:
@@ -435,7 +479,6 @@ async def handle_webhook_event(event: Dict[str, Any]) -> None:
         logger.debug(f"Added to conversation context: group={group_id[:8]}, type={message_type}")
 
     # Log full event structure for debugging reply/quote feature
-    import json
     logger.debug(f"Full event structure: {json.dumps(event, ensure_ascii=False)}")
 
     # Parse command from message

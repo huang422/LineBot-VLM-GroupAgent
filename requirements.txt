@@ -32,6 +32,9 @@ httpx>=0.26.0
 # Web Search (Tavily AI)
 tavily-python>=0.5.0
 
+# Simplified → Traditional Chinese conversion
+opencc-python-reimplemented>=0.1.7
+
 # Environment management
 python-dotenv>=1.0.0
 

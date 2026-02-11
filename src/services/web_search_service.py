@@ -10,6 +10,7 @@ API Documentation: https://docs.tavily.com/
 
 from typing import Optional, List
 from dataclasses import dataclass
+from datetime import datetime, timezone
 
 from src.config import get_settings
 from src.utils.logger import get_logger
@@ -103,10 +104,16 @@ class WebSearchService:
         self.max_results = max(1, min(10, max_results))
         self._client = None
 
+        # Monthly quota tracking (resets each month automatically)
+        self._monthly_quota = settings.web_search_monthly_quota
+        self._month_search_count = 0
+        self._current_month = datetime.now(timezone.utc).strftime("%Y-%m")
+
         if self.api_key:
             logger.info(
                 f"WebSearchService initialized with Tavily API, "
-                f"max_results={self.max_results}"
+                f"max_results={self.max_results}, "
+                f"monthly_quota={self._monthly_quota}"
             )
         else:
             logger.warning(
@@ -118,6 +125,38 @@ class WebSearchService:
     def is_configured(self) -> bool:
         """Check if API key is configured."""
         return bool(self.api_key)
+
+    def _check_and_reset_month(self) -> None:
+        """Reset monthly counter if we've entered a new month."""
+        current_month = datetime.now(timezone.utc).strftime("%Y-%m")
+        if current_month != self._current_month:
+            logger.info(
+                f"Monthly quota reset: {self._current_month} -> {current_month}, "
+                f"last month used {self._month_search_count}/{self._monthly_quota}"
+            )
+            self._current_month = current_month
+            self._month_search_count = 0
+
+    @property
+    def quota_remaining(self) -> int:
+        """Get remaining search quota for this month."""
+        self._check_and_reset_month()
+        return max(0, self._monthly_quota - self._month_search_count)
+
+    @property
+    def is_quota_available(self) -> bool:
+        """Check if there's remaining search quota."""
+        return self.quota_remaining > 0
+
+    def get_quota_stats(self) -> dict:
+        """Get quota statistics for monitoring."""
+        self._check_and_reset_month()
+        return {
+            "month": self._current_month,
+            "used": self._month_search_count,
+            "quota": self._monthly_quota,
+            "remaining": self.quota_remaining,
+        }
 
     def _get_client(self):
         """Get or create Tavily client (lazy initialization)."""
@@ -163,6 +202,13 @@ class WebSearchService:
         if not self.is_configured:
             raise WebSearchError("Tavily API key not configured")
 
+        # Check monthly quota
+        if not self.is_quota_available:
+            logger.warning(
+                f"Monthly search quota exhausted: {self._month_search_count}/{self._monthly_quota}"
+            )
+            raise WebSearchError("Monthly search quota exhausted")
+
         # Use provided values or defaults
         num_results = max_results or self.max_results
         num_results = max(1, min(10, num_results))
@@ -202,8 +248,12 @@ class WebSearchService:
                 answer=response.get("answer") if include_answer else None,
             )
 
+            # Increment monthly counter after successful search
+            self._month_search_count += 1
+
             logger.info(
-                f"Tavily search complete: query='{query[:30]}...', results={len(results)}"
+                f"Tavily search complete: query='{query[:30]}...', results={len(results)}, "
+                f"quota={self.quota_remaining}/{self._monthly_quota} remaining"
             )
 
             return search_response

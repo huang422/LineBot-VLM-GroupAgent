@@ -205,7 +205,7 @@ class LineService:
             )
             
             if response.status_code == 200:
-                logger.debug(f"Push sent to {to[:8]}...")
+                logger.warning(f"Push message sent (paid) to {to[:8]}...")
                 return True
             else:
                 logger.error(f"Push failed: {response.status_code}")
@@ -264,6 +264,48 @@ class LineService:
             logger.error(f"Image reply error: {e}")
             return (False, None, original_url)
     
+    async def send_loading_animation(
+        self,
+        chat_id: str,
+        loading_seconds: int = 60,
+    ) -> bool:
+        """
+        Send a loading animation to indicate the bot is processing.
+
+        This is FREE and does not count toward message quotas.
+        Shows a typing/loading indicator to the user for up to 60 seconds.
+
+        Args:
+            chat_id: User ID or group ID
+            loading_seconds: Duration in seconds (5-60, default 60)
+
+        Returns:
+            True if successful
+        """
+        loading_seconds = max(5, min(60, loading_seconds))
+
+        payload = {
+            "chatId": chat_id,
+            "loadingSeconds": loading_seconds,
+        }
+
+        try:
+            response = await self.client.post(
+                f"{LINE_API_BASE}/bot/chat/loading/start",
+                json=payload,
+            )
+
+            if response.status_code in (200, 202):
+                logger.debug(f"Loading animation sent to {chat_id[:8]}... ({loading_seconds}s)")
+                return True
+            else:
+                logger.debug(f"Loading animation failed: {response.status_code}")
+                return False
+
+        except Exception as e:
+            logger.debug(f"Loading animation error: {e}")
+            return False
+
     async def get_message_content(self, message_id: str) -> Optional[BytesIO]:
         """
         Download message content (image, video, etc.).

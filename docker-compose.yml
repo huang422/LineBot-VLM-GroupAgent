@@ -34,6 +34,15 @@ services:
       - ollama_data:/root/.ollama
     networks:
       - linebot-network
+    # GPU 環境變數設定
+    environment:
+      - NVIDIA_VISIBLE_DEVICES=all
+      - NVIDIA_DRIVER_CAPABILITIES=compute,utility
+      # 限制 Ollama 最大 VRAM 使用量（9GB），避免 qwen3-vl:8b 佔滿 12GB GPU 記憶體
+      # Ollama 預設會用盡所有 VRAM 做 KV cache，此設定限制總使用量
+      - OLLAMA_MAX_VRAM=9663676416
+    # 使用 nvidia runtime
+    runtime: nvidia
     deploy:
       resources:
         reservations:

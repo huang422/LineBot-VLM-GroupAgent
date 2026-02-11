@@ -3,20 +3,32 @@ Ollama Service for local VLM integration.
 
 Handles communication with the locally deployed Ollama API
 for text and multimodal (vision) inference requests.
+
+Supports streaming with <think> tag filtering for reasoning models
+(e.g., qwen3-vl) to strip internal reasoning and return only the
+final response content.
 """
 
-import asyncio
-from typing import Optional, AsyncGenerator
+import json
+import re
+import time
+from datetime import datetime, timezone, timedelta
+from typing import Optional
 import httpx
+
+from opencc import OpenCC
 
 from src.config import get_settings
 from src.utils.logger import get_logger
+
+# Simplified → Traditional Chinese converter (singleton)
+_s2t = OpenCC('s2t')
 
 logger = get_logger("services.ollama")
 
 # Timeout settings
 CONNECT_TIMEOUT = 10.0  # seconds
-READ_TIMEOUT = 120.0    # seconds (LLM inference can be slow)
+READ_TIMEOUT = 300.0    # seconds (reasoning models may think longer)
 
 
 class OllamaError(Exception):
@@ -39,11 +51,11 @@ class OllamaService:
     Service for interacting with Ollama API.
     
     Supports both text-only and multimodal (image + text) requests
-    using the gemma3:4b VLM model.
-    
+    using the qwen3-vl:8b VLM model.
+
     Attributes:
         base_url: Ollama API base URL (e.g., http://localhost:11434)
-        model: Model name (e.g., gemma3:4b)
+        model: Model name (e.g., qwen3-vl:8b)
         client: Async HTTP client for API calls
     """
     
@@ -76,6 +88,14 @@ class OllamaService:
             f"OllamaService initialized: {self.base_url}, model={self.model}"
         )
     
+    @staticmethod
+    def _get_time_prefix() -> str:
+        """Get current Taiwan time as a short prefix for system prompt."""
+        tw = timezone(timedelta(hours=8))
+        now = datetime.now(tw)
+        weekdays = ["一", "二", "三", "四", "五", "六", "日"]
+        return f"現在時間：{now.strftime('%Y-%m-%d')} 星期{weekdays[now.weekday()]} {now.strftime('%H:%M')}\n"
+
     async def close(self) -> None:
         """Close the HTTP client."""
         await self.client.aclose()
@@ -107,7 +127,13 @@ class OllamaService:
         web_search_results: Optional[str] = None,
     ) -> str:
         """
-        Generate a response from the LLM.
+        Generate a response from the LLM using streaming with smart think routing.
+
+        Automatically decides between /think and /no_think modes:
+        - /no_think (default, ~80% of queries): Fast, 5-15s, fits within reply_token
+        - /think (complex queries only): Slower but deeper reasoning, 20-60s+
+
+        The think content is always filtered from the output regardless of mode.
 
         Args:
             prompt: User question/prompt
@@ -118,71 +144,98 @@ class OllamaService:
             web_search_results: Optional web search results for augmented responses
 
         Returns:
-            Generated response text
+            Generated response text (with thinking content stripped)
 
         Raises:
             OllamaConnectionError: If service is unreachable
             OllamaInferenceError: If inference fails
         """
-        # Build the full prompt with context
-        full_prompt = self._build_prompt(prompt, context_text, conversation_history, web_search_results)
-        
-        # Build request payload
-        payload = {
-            "model": self.model,
-            "prompt": full_prompt,
-            "stream": False,  # Get complete response
-            "options": {
-                "num_predict": 1024,  # Max tokens to generate
-                "temperature": 0.7,
+        settings = get_settings()
+        is_multimodal = image_base64 is not None
+        time_prefix = self._get_time_prefix()
+
+        logger.info(f"Generating response for: '{prompt[:50]}...' (multimodal={is_multimodal})")
+
+        if is_multimodal:
+            # Image requests: use minimal prompt to save context tokens.
+            # Images consume ~1000-2000 prompt tokens; keep text short.
+            # Use /no_think for direct answers without reasoning overhead.
+            image_prompt = f"/no_think\n{prompt}" if prompt else "/no_think\ndescribe this image"
+            if context_text:
+                image_prompt += f"\n\nReferenced message:\n{context_text}"
+
+            payload = {
+                "model": self.model,
+                "prompt": image_prompt,
+                "stream": True,
+                "system": f"{time_prefix}你是圖片分析助手。直接描述和回答，不需要思考過程。必須使用繁體中文回覆，禁止使用簡體中文。",
+                "images": [image_base64],
+                "options": {
+                    "num_predict": settings.ollama_num_predict,
+                    "temperature": 0.5,
+                    "num_ctx": settings.ollama_num_ctx,
+                }
             }
-        }
-        
-        # Add system prompt if provided
-        if system_prompt:
-            payload["system"] = system_prompt
-        
-        # Add image for multimodal request
-        if image_base64:
-            payload["images"] = [image_base64]
-            logger.debug("Multimodal request with image")
-        
+            logger.debug("Multimodal request with image (lightweight prompt)")
+        else:
+            # Text-only requests: full prompt with context and history
+            full_prompt = self._build_prompt(prompt, context_text, conversation_history, web_search_results)
+            payload = {
+                "model": self.model,
+                "prompt": full_prompt,
+                "stream": True,
+                "system": f"{time_prefix}{system_prompt}" if system_prompt else time_prefix,
+                "options": {
+                    "num_predict": settings.ollama_num_predict,
+                    "temperature": settings.ollama_temperature,
+                    "num_ctx": settings.ollama_num_ctx,
+                }
+            }
+
         try:
-            logger.debug(
-                f"Sending request to Ollama",
-                extra={"prompt_length": len(full_prompt), "has_image": bool(image_base64)}
-            )
-            
-            response = await self.client.post(
-                f"{self.base_url}/api/generate",
-                json=payload,
-            )
-            
-            if response.status_code != 200:
-                error_text = response.text[:200]
-                logger.error(f"Ollama API error: {response.status_code} - {error_text}")
-                raise OllamaInferenceError(
-                    f"Ollama returned status {response.status_code}"
-                )
-            
-            result = response.json()
-            generated_text = result.get("response", "").strip()
-            
-            # Log generation stats
-            eval_count = result.get("eval_count", 0)
-            total_duration = result.get("total_duration", 0) / 1e9  # nanoseconds to seconds
-            
+            start_time = time.monotonic()
+            response_text, think_text, stats = await self._stream_ollama(payload)
+            elapsed = time.monotonic() - start_time
+
             logger.info(
                 f"Generation complete",
                 extra={
-                    "tokens": eval_count,
-                    "duration_seconds": round(total_duration, 2),
-                    "response_length": len(generated_text),
+                    "duration_seconds": round(elapsed, 2),
+                    "response_length": len(response_text),
+                    "think_length": len(think_text),
+                    "total_tokens": stats.get("total_tokens", 0),
+                    "done_reason": stats.get("done_reason", "unknown"),
                 }
             )
-            
-            return generated_text
-            
+
+            if response_text.strip():
+                return _s2t.convert(response_text.strip())
+
+            # Response empty — model spent all tokens on thinking (done_reason=length).
+            # Extract useful content from think text as fallback.
+            if think_text.strip():
+                logger.warning(
+                    f"Empty response, using think content as fallback "
+                    f"(think_len={len(think_text)}, done_reason={stats.get('done_reason')})"
+                )
+                fallback = think_text.strip()
+                # Try to find a conclusion-like section
+                # Check both traditional and simplified markers
+                for marker in ["所以", "因此", "總結", "总结", "結論", "结论",
+                                "答案", "回答", "總之", "总之"]:
+                    idx = fallback.rfind(marker)
+                    if idx != -1:
+                        fallback = fallback[idx:]
+                        break
+                else:
+                    # No marker found, take the last 800 chars
+                    if len(fallback) > 800:
+                        fallback = "..." + fallback[-800:]
+                return _s2t.convert(fallback)
+
+            # Truly nothing produced
+            raise OllamaInferenceError("Model produced empty response")
+
         except httpx.ConnectError as e:
             logger.error(f"Failed to connect to Ollama: {e}")
             raise OllamaConnectionError(
@@ -198,72 +251,191 @@ class OllamaService:
                 raise
             logger.error(f"Unexpected Ollama error: {e}", exc_info=True)
             raise OllamaInferenceError(f"Inference failed: {str(e)}")
+
+    async def _stream_ollama(
+        self,
+        payload: dict,
+    ) -> tuple[str, str, dict]:
+        """
+        Stream response from Ollama, reading both 'response' and 'thinking' fields.
+
+        Ollama natively separates thinking content (in 'thinking' field) from
+        the actual response (in 'response' field) for reasoning models like qwen3-vl.
+        No manual <think> tag parsing needed.
+
+        Args:
+            payload: Ollama API request payload (must have stream=True)
+
+        Returns:
+            Tuple of (response_text, think_text, stats_dict)
+        """
+        response_text = ""
+        think_text = ""
+        total_tokens = 0
+        done_reason = ""
+
+        async with self.client.stream(
+            "POST",
+            f"{self.base_url}/api/generate",
+            json=payload,
+            timeout=httpx.Timeout(
+                connect=CONNECT_TIMEOUT,
+                read=READ_TIMEOUT,
+                write=30.0,
+                pool=10.0,
+            ),
+        ) as stream:
+            if stream.status_code != 200:
+                error_body = await stream.aread()
+                raise OllamaInferenceError(
+                    f"Ollama returned status {stream.status_code}: {error_body[:200]}"
+                )
+
+            async for line in stream.aiter_lines():
+                if not line:
+                    continue
+
+                try:
+                    data = json.loads(line)
+                except json.JSONDecodeError:
+                    continue
+
+                # Ollama separates thinking and response into two fields
+                thinking_token = data.get("thinking", "")
+                response_token = data.get("response", "")
+
+                if thinking_token:
+                    think_text += thinking_token
+                    total_tokens += 1
+
+                if response_token:
+                    response_text += response_token
+                    total_tokens += 1
+
+                if data.get("done"):
+                    done_reason = data.get("done_reason", "")
+                    break
+
+        # Final cleanup: remove any residual think tags (fallback for older Ollama)
+        response_text = re.sub(r"<think>.*?</think>", "", response_text, flags=re.DOTALL)
+        response_text = re.sub(r"</?think>", "", response_text)
+
+        stats = {"total_tokens": total_tokens, "done_reason": done_reason}
+
+        if think_text:
+            logger.debug(f"Think content: {len(think_text)} chars")
+
+        return response_text, think_text, stats
     
-    async def generate_stream(
+    async def classify_needs_search(
         self,
         prompt: str,
         system_prompt: Optional[str] = None,
-        image_base64: Optional[str] = None,
-        context_text: Optional[str] = None,
-        conversation_history: Optional[str] = None,
-    ) -> AsyncGenerator[str, None]:
+    ) -> bool:
         """
-        Generate a streaming response from the LLM.
+        Determine if a question needs web search.
 
-        Yields tokens as they are generated for real-time output.
+        Two-stage approach:
+        1. Fast path: keyword matching for obvious time-sensitive queries
+        2. Slow path: lightweight LLM classification with few-shot examples
 
         Args:
-            prompt: User question/prompt
-            system_prompt: System prompt for behavior control
-            image_base64: Optional base64-encoded image
-            context_text: Optional text context
-            conversation_history: Optional conversation history for context
+            prompt: User's question
+            system_prompt: Optional system prompt (unused, kept for interface consistency)
 
-        Yields:
-            Generated text chunks
+        Returns:
+            True if the question likely needs web search
         """
-        full_prompt = self._build_prompt(prompt, context_text, conversation_history)
-        
+        # === Stage 1: Fast keyword matching (no LLM call needed) ===
+        time_sensitive_keywords = [
+            # 時間相關
+            "今天", "明天", "昨天", "今晚", "今年", "這週", "本週", "下週",
+            "最新", "最近", "現在", "目前", "即時",
+            # 即時資訊類
+            "新聞", "天氣", "氣溫", "股價", "匯率", "幣價", "油價",
+            "比賽", "比分", "結果", "成績", "排名", "戰績",
+            # 事件查詢
+            "發生什麼", "怎麼了", "出了什麼事",
+            # 年份（需要即時資訊的高機率指標）
+            "2024", "2025", "2026",
+            # English keywords
+            "today", "tomorrow", "yesterday", "latest", "recent", "current",
+            "news", "weather", "price", "score", "ranking",
+        ]
+        prompt_lower = prompt.lower()
+        for kw in time_sensitive_keywords:
+            if kw in prompt_lower:
+                logger.info(f"Auto search triggered by keyword: '{kw}'")
+                return True
+
+        # === Stage 2: LLM classification with few-shot examples ===
+        classify_system = (
+            "你是一個搜尋判斷助手。你的唯一任務是判斷使用者的問題是否需要即時網路搜尋才能正確回答。\n"
+            "只回答 YES 或 NO，不要輸出任何其他內容。"
+        )
+
+        classify_prompt = (
+            "## 判斷規則\n"
+            "需要搜尋（YES）的情況：\n"
+            "- 問題涉及即時資訊（天氣、新聞、股價、比賽結果）\n"
+            "- 問題涉及特定時間點的事實（今天、最近、最新）\n"
+            "- 問題涉及你訓練資料可能過時的資訊（新產品、新政策、近期事件）\n"
+            "- 問題需要查證具體事實（某個地址、營業時間、票價）\n\n"
+            "不需要搜尋（NO）的情況：\n"
+            "- 一般知識問答（程式語言語法、數學計算、歷史常識）\n"
+            "- 主觀意見或建議（該買什麼、怎麼選擇）\n"
+            "- 閒聊、打招呼、情緒表達\n"
+            "- 圖片分析、翻譯、文字處理\n"
+            "- 技術問題排查（Bug、錯誤訊息分析）\n\n"
+            "## 範例\n"
+            "問題：台北現在幾度？ → YES\n"
+            "問題：Python怎麼寫迴圈？ → NO\n"
+            "問題：iPhone 16 Pro 價格多少？ → YES\n"
+            "問題：幫我解釋這段程式碼 → NO\n"
+            "問題：台積電今天收盤價？ → YES\n"
+            "問題：推薦一下好吃的餐廳 → YES\n"
+            "問題：什麼是機器學習？ → NO\n"
+            "問題：埃及金字塔有多高？ → NO\n\n"
+            f"問題：{prompt}\n"
+            "回答："
+        )
+
         payload = {
             "model": self.model,
-            "prompt": full_prompt,
-            "stream": True,
+            "prompt": classify_prompt,
+            "system": classify_system,
+            "stream": False,
             "options": {
-                "num_predict": 1024,
-                "temperature": 0.7,
+                "num_predict": 30,  # Enough for thinking + YES/NO
+                "temperature": 0,
             }
         }
-        
-        if system_prompt:
-            payload["system"] = system_prompt
-        
-        if image_base64:
-            payload["images"] = [image_base64]
-        
+
         try:
-            async with self.client.stream(
-                "POST",
+            response = await self.client.post(
                 f"{self.base_url}/api/generate",
                 json=payload,
-            ) as response:
-                if response.status_code != 200:
-                    raise OllamaInferenceError(f"Ollama returned {response.status_code}")
-                
-                async for line in response.aiter_lines():
-                    if line:
-                        import json
-                        data = json.loads(line)
-                        if token := data.get("response"):
-                            yield token
-                        if data.get("done"):
-                            break
-                            
-        except httpx.ConnectError:
-            raise OllamaConnectionError(f"Cannot connect to Ollama at {self.base_url}")
+                timeout=httpx.Timeout(connect=CONNECT_TIMEOUT, read=15.0, write=10.0, pool=5.0),
+            )
+
+            if response.status_code == 200:
+                result = response.json()
+                # Ollama may put answer in 'response' or 'thinking' field
+                raw_response = result.get("response", "").strip()
+                raw_thinking = result.get("thinking", "").strip()
+                # Combine both fields to find YES/NO
+                combined = f"{raw_response} {raw_thinking}".upper()
+                needs_search = "YES" in combined
+                logger.info(
+                    f"Search classification: response='{raw_response[:30]}' "
+                    f"thinking='{raw_thinking[:30]}' -> needs_search={needs_search}"
+                )
+                return needs_search
+
         except Exception as e:
-            if isinstance(e, OllamaError):
-                raise
-            raise OllamaInferenceError(f"Stream failed: {str(e)}")
+            logger.warning(f"Search classification failed, defaulting to no search: {e}")
+
+        return False
     
     def _build_prompt(
         self,

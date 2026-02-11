@@ -16,6 +16,9 @@ from src.utils.logger import get_logger
 
 logger = get_logger("services.queue")
 
+# Timeout error message for users
+MSG_TIMEOUT = "⚠️ 處理時間過長，請稍後再試。"
+
 
 class QueueFullError(Exception):
     """Raised when the queue is at maximum capacity."""
@@ -274,8 +277,10 @@ class QueueService:
                 f"Request timed out after {self.timeout_seconds}s",
                 extra={"request_id": request.request_id}
             )
-            # Let the processor handle timeout notification if needed
-            
+            # Task was cancelled by wait_for — processor's except block
+            # never runs. We MUST notify the user here.
+            await self._send_guaranteed_notification(request, MSG_TIMEOUT)
+
         except Exception as e:
             self._total_errors += 1
             logger.error(
@@ -283,7 +288,7 @@ class QueueService:
                 extra={"request_id": request.request_id},
                 exc_info=True
             )
-            
+
             # Retry if allowed
             if request.can_retry:
                 request.increment_retry()
@@ -296,9 +301,50 @@ class QueueService:
                             "retry_count": request.retry_count,
                         }
                     )
+                    return  # Will retry, don't notify yet
                 except asyncio.QueueFull:
                     logger.warning("Cannot requeue - queue is full")
+
+            # No retry possible — notify user
+            await self._send_guaranteed_notification(
+                request, "❌ 處理請求時發生錯誤，請稍後再試。"
+            )
     
+    async def _send_guaranteed_notification(
+        self, request: LLMRequest, message: str
+    ) -> None:
+        """
+        Best-effort notification to user when processing fails.
+
+        Tries reply_token first (free), then push (paid).
+        This runs OUTSIDE the cancelled processor task, so it's our
+        last chance to notify the user.
+        """
+        try:
+            from src.services.line_service import get_line_service
+            line_service = get_line_service()
+
+            sent = False
+            # Try reply_token first (may already be expired)
+            if request.reply_token:
+                success, _, _ = await line_service.reply_text(
+                    request.reply_token, message
+                )
+                sent = success
+
+            # Fallback to push
+            if not sent:
+                sent = await line_service.push_text(
+                    to=request.group_id, text=message
+                )
+
+            if sent:
+                logger.info(f"Timeout/error notification sent to {request.group_id[:8]}...")
+            else:
+                logger.error(f"Failed to send notification to {request.group_id[:8]}...")
+        except Exception as e:
+            logger.error(f"Notification send error: {e}")
+
     def get_stats(self) -> dict:
         """Get queue statistics for monitoring."""
         uptime = None

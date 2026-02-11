@@ -116,7 +116,7 @@ class Settings(BaseSettings):
         description="Maximum pending LLM requests in queue"
     )
     queue_timeout_seconds: int = Field(
-        default=120,
+        default=180,
         ge=30,
         le=600,
         description="Request timeout in seconds"
@@ -160,7 +160,7 @@ class Settings(BaseSettings):
     # ==========================================================================
     default_system_prompt: str = Field(
         default="""You are a helpful AI assistant in a LINE group chat.
-Respond concisely and helpfully in the same language the user uses.
+Respond concisely and helpfully. Always reply in Traditional Chinese (繁體中文), never use Simplified Chinese.
 If analyzing images, describe what you see clearly and answer any questions about the content.
 Be friendly but professional.""",
         description="Default system prompt when Google Drive is not configured"
@@ -179,11 +179,45 @@ Be friendly but professional.""",
     )
 
     # ==========================================================================
+    # Ollama Model Parameters
+    # ==========================================================================
+    ollama_num_predict: int = Field(
+        default=4096,
+        ge=128,
+        le=16384,
+        description="Max tokens to generate per request (includes thinking + response)"
+    )
+    ollama_temperature: float = Field(
+        default=0.7,
+        ge=0.0,
+        le=2.0,
+        description="Model temperature (0=deterministic, higher=creative)"
+    )
+    ollama_num_ctx: int = Field(
+        default=8192,
+        ge=1024,
+        le=32768,
+        description="Context window size (8192 needed for image+prompt to fit)"
+    )
+
+    # ==========================================================================
     # Web Search Configuration (Tavily AI)
     # ==========================================================================
     tavily_api_key: Optional[str] = Field(
         default=None,
         description="Tavily API key for web search (!web command)"
+    )
+    # Auto search: let LLM decide if web search is needed for !hej commands
+    auto_web_search_enabled: bool = Field(
+        default=True,
+        description="Enable automatic web search detection for !hej commands"
+    )
+    # Monthly search quota to stay within Tavily free tier (1000/month)
+    web_search_monthly_quota: int = Field(
+        default=950,
+        ge=0,
+        le=10000,
+        description="Monthly web search quota (set below API limit for safety margin)"
     )
 
 

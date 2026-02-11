@@ -24,7 +24,6 @@ from src.utils.logger import get_logger
 logger = get_logger("handlers.hej")
 
 # Response messages
-MSG_QUEUED = "🔄 收到！正在處理您的請求... (隊列位置: {position}，預計等待 {wait}秒)"
 MSG_QUEUE_FULL = "⚠️ 抱歉，系統目前繁忙。請稍後再試。"
 MSG_RATE_LIMITED = "⚠️ 您的請求太頻繁了。請在 {seconds} 秒後再試。"
 MSG_EMPTY_PROMPT = "❓ 請在 !hej 後輸入您的問題。例如：!hej 今天天氣如何？"
@@ -162,16 +161,19 @@ async def handle_hej_command(
                 f"---\n{conversation_history}\n---"
             )
 
-        # Create LLM request
+        # Web search is deferred to process_llm_request() to save reply_token time.
+        # The classify + search can take 5-20s, eating into the ~30s reply_token window.
+        user_prompt = command.argument or "請分析這個內容"
+
+        # Create LLM request (web_search_results will be populated in processor)
         request = LLMRequest(
             user_id=user_id,
             group_id=group_id,
-            prompt=command.argument or "請分析這個內容",  # Default for reply-only
+            prompt=user_prompt,
             system_prompt=get_current_prompt(),
             reply_token=reply_token,
             context_text=context_text,
             conversation_history=conversation_history,
-            # Note: context_image_base64 will be populated by the processor if needed
         )
 
         # Store quoted image info for later processing

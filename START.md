@@ -18,15 +18,7 @@
 ---
 
 ## 🚀 快速啟動
-
-### 方法一：使用啟動腳本（推薦）
-
-```bash
-cd /home/user/Desktop/Tom/AI-linebot
-./start.sh
-```
-
-### 方法二：手動啟動
+### 手動啟動
 
 ```bash
 # 1. 啟動所有服務
@@ -61,7 +53,7 @@ docker compose logs linebot | grep -o '"groupId": "[^"]*"' | sort -u
 docker compose exec ollama ollama list
 
 # 如果沒有 gemma3:4b，執行下載（約 2.5GB，需要幾分鐘）
-docker compose exec ollama ollama pull gemma3:4b
+docker compose exec ollama ollama pull qwen3-vl:8b
 ```
 
 ---
@@ -638,6 +630,11 @@ AI-linebot/
 - **專案 README**：[README.md](README.md)
 - **設計文件**：[specs/001-line-bot-ollama/](specs/001-line-bot-ollama/)
 - **詳細設定指南**：[docs/setup-guide-zh-TW.md](docs/setup-guide-zh-TW.md)
+- **line 訊息用量**：https://manager.line.biz/account/@033jhxzy/purchase
+- **tavily 搜尋用量**：https://app.tavily.com/home
+
+
+
 
 ---
 

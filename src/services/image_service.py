@@ -23,7 +23,11 @@ import httpx
 logger = get_logger("services.image")
 
 # Maximum dimension (longest side) before resizing
-MAX_IMAGE_DIMENSION = 1920
+# VLM doesn't need high-res; 800px saves ~1000 prompt tokens vs 1920px
+MAX_IMAGE_DIMENSION = 800
+
+# Minimum dimension required by qwen3-vl (SmartResize needs >= 32px per side)
+MIN_IMAGE_DIMENSION = 64
 
 # Supported image formats
 SUPPORTED_FORMATS = {"JPEG", "PNG", "WEBP", "GIF"}
@@ -122,9 +126,18 @@ def process_image_bytes(
             if img.format not in SUPPORTED_FORMATS:
                 logger.warning(f"Converting {img.format} to JPEG")
             
+            # Ensure minimum dimensions for VLM (qwen3-vl needs >= 32px)
+            width, height = img.size
+            if width < MIN_IMAGE_DIMENSION or height < MIN_IMAGE_DIMENSION:
+                scale = max(MIN_IMAGE_DIMENSION / width, MIN_IMAGE_DIMENSION / height)
+                new_w = max(int(width * scale), MIN_IMAGE_DIMENSION)
+                new_h = max(int(height * scale), MIN_IMAGE_DIMENSION)
+                img = img.resize((new_w, new_h), Image.Resampling.LANCZOS)
+                logger.debug(f"Upscaled small image: {width}x{height} -> {new_w}x{new_h}")
+
             # Resize if needed (preserve aspect ratio)
             img = resize_image(img, max_dimension)
-            
+
             # Convert to RGB if necessary (for JPEG encoding)
             if img.mode in ("RGBA", "P"):
                 # Create white background for transparency
