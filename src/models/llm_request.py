@@ -6,7 +6,7 @@ for Ollama API calls and LINE response handling.
 """
 
 from dataclasses import dataclass, field
-from datetime import datetime
+from datetime import datetime, timezone
 from typing import Optional
 from uuid import uuid4
 import re
@@ -48,7 +48,7 @@ class LLMRequest:
     prompt: str
     system_prompt: str
     request_id: str = field(default_factory=lambda: str(uuid4()))
-    timestamp: datetime = field(default_factory=datetime.utcnow)
+    timestamp: datetime = field(default_factory=lambda: datetime.now(timezone.utc))
     reply_token: Optional[str] = None
     context_text: Optional[str] = None
     context_image_base64: Optional[str] = None
@@ -134,7 +134,7 @@ class LLMRequest:
     @property
     def age_seconds(self) -> float:
         """Get request age in seconds."""
-        return (datetime.utcnow() - self.timestamp).total_seconds()
+        return (datetime.now(timezone.utc) - self.timestamp).total_seconds()
     
     def to_dict(self) -> dict:
         """Convert to dictionary for logging/debugging."""

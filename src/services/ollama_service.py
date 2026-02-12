@@ -125,6 +125,7 @@ class OllamaService:
         context_text: Optional[str] = None,
         conversation_history: Optional[str] = None,
         web_search_results: Optional[str] = None,
+        extracted_content: Optional[str] = None,
     ) -> str:
         """
         Generate a response from the LLM using streaming with smart think routing.
@@ -142,6 +143,7 @@ class OllamaService:
             context_text: Optional text context (e.g., quoted message)
             conversation_history: Optional conversation history for context
             web_search_results: Optional web search results for augmented responses
+            extracted_content: Optional extracted webpage content from URLs
 
         Returns:
             Generated response text (with thinking content stripped)
@@ -179,7 +181,7 @@ class OllamaService:
             logger.debug("Multimodal request with image (lightweight prompt)")
         else:
             # Text-only requests: full prompt with context and history
-            full_prompt = self._build_prompt(prompt, context_text, conversation_history, web_search_results)
+            full_prompt = self._build_prompt(prompt, context_text, conversation_history, web_search_results, extracted_content)
             payload = {
                 "model": self.model,
                 "prompt": full_prompt,
@@ -212,15 +214,19 @@ class OllamaService:
                 return _s2t.convert(response_text.strip())
 
             # Response empty — model spent all tokens on thinking (done_reason=length).
-            # Extract useful content from think text as fallback.
+            # Use a lightweight LLM call to summarize think content into a complete reply.
             if think_text.strip():
                 logger.warning(
-                    f"Empty response, using think content as fallback "
+                    f"Empty response, summarizing think content "
                     f"(think_len={len(think_text)}, done_reason={stats.get('done_reason')})"
                 )
+                summarized = await self._summarize_think_content(think_text, prompt)
+                if summarized:
+                    return _s2t.convert(summarized)
+
+                # Summarization failed, use legacy marker-based fallback
+                logger.warning("Think summarization failed, using marker-based fallback")
                 fallback = think_text.strip()
-                # Try to find a conclusion-like section
-                # Check both traditional and simplified markers
                 for marker in ["所以", "因此", "總結", "总结", "結論", "结论",
                                 "答案", "回答", "總之", "总之"]:
                     idx = fallback.rfind(marker)
@@ -228,7 +234,6 @@ class OllamaService:
                         fallback = fallback[idx:]
                         break
                 else:
-                    # No marker found, take the last 800 chars
                     if len(fallback) > 800:
                         fallback = "..." + fallback[-800:]
                 return _s2t.convert(fallback)
@@ -251,6 +256,77 @@ class OllamaService:
                 raise
             logger.error(f"Unexpected Ollama error: {e}", exc_info=True)
             raise OllamaInferenceError(f"Inference failed: {str(e)}")
+
+    async def _summarize_think_content(
+        self,
+        think_text: str,
+        original_prompt: str,
+    ) -> Optional[str]:
+        """
+        Summarize thinking content into a complete, polished reply.
+
+        When the model exhausts all tokens on thinking (done_reason=length),
+        this method takes the thinking content and uses a streaming LLM call
+        to produce a clean, complete response. Uses streaming to properly
+        separate thinking from response content.
+
+        Args:
+            think_text: Raw thinking content from the model
+            original_prompt: The user's original question
+
+        Returns:
+            Summarized response text, or None if summarization fails
+        """
+        # Take the last 2000 chars of thinking (most likely contains conclusions)
+        think_tail = think_text[-2000:] if len(think_text) > 2000 else think_text
+
+        summarize_prompt = (
+            f"/no_think\n"
+            f"使用者的問題：{original_prompt}\n\n"
+            f"以下是針對這個問題的分析內容：\n"
+            f"---\n{think_tail}\n---\n\n"
+            f"請根據以上分析內容，直接輸出一個完整、簡潔的回覆給使用者。"
+            f"不要提及「根據分析」或「以上內容」，直接回答問題。"
+        )
+
+        payload = {
+            "model": self.model,
+            "prompt": summarize_prompt,
+            "system": "你是一個助手。將分析內容整理為簡潔完整的回覆。直接輸出結論，不要有思考過程。必須使用繁體中文。",
+            "stream": True,
+            "options": {
+                "num_predict": 512,
+                "temperature": 0.3,
+            }
+        }
+
+        try:
+            import asyncio
+
+            async def _do_summarize():
+                response_text, think_text_inner, _ = await self._stream_ollama(payload)
+                # Combine both fields — use response if available, otherwise thinking
+                summary = response_text.strip()
+                if not summary and think_text_inner.strip():
+                    summary = think_text_inner.strip()
+                    logger.info("Think summarization: response empty, using thinking field content")
+                return summary
+
+            summary = await asyncio.wait_for(_do_summarize(), timeout=20.0)
+
+            if summary:
+                logger.info(f"Think content summarized: {len(think_text)} -> {len(summary)} chars")
+                return summary
+
+            logger.warning("Think summarization returned empty content")
+            return None
+
+        except asyncio.TimeoutError:
+            logger.warning("Think summarization timed out (20s)")
+            return None
+        except Exception as e:
+            logger.warning(f"Think summarization error: {e}")
+            return None
 
     async def _stream_ollama(
         self,
@@ -443,21 +519,24 @@ class OllamaService:
         context_text: Optional[str] = None,
         conversation_history: Optional[str] = None,
         web_search_results: Optional[str] = None,
+        extracted_content: Optional[str] = None,
     ) -> str:
         """
-        Build the full prompt including context, conversation history, and web search.
+        Build the full prompt including context, conversation history, web search, and extracted content.
 
         The prompt is structured as:
         1. User's current message (User message)
         2. Referenced message (if exists)
         3. Recent conversation history
-        4. Web search results (if exists)
+        4. Extracted webpage content (if exists)
+        5. Web search results (if exists)
 
         Args:
             prompt: User's question
             context_text: Optional context from quoted message
             conversation_history: Optional recent conversation history
             web_search_results: Optional web search results
+            extracted_content: Optional extracted webpage content
 
         Returns:
             Combined prompt string
@@ -483,7 +562,15 @@ class OllamaService:
             parts.append(conversation_history)
             parts.append("---")
 
-        # 4. Add web search results (if available)
+        # 4. Add extracted webpage content (if available)
+        if extracted_content:
+            parts.append("")
+            parts.append("Extracted webpage content:")
+            parts.append("---")
+            parts.append(extracted_content)
+            parts.append("---")
+
+        # 5. Add web search results (if available)
         if web_search_results:
             parts.append("")
             parts.append("web search:")

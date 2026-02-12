@@ -6,7 +6,7 @@ to the LLM, helping it understand the ongoing discussion and provide
 more contextually relevant responses.
 """
 
-from collections import OrderedDict, deque
+from collections import deque
 from typing import Optional, Dict, Any, List
 import time
 
@@ -198,7 +198,6 @@ def _cleanup_expired_messages() -> None:
 
     Internal method called periodically during message additions.
     """
-    current_time = time.time()
     groups_to_remove = []
 
     for group_id, messages in _context_store.items():

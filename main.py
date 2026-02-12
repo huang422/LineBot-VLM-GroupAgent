@@ -9,7 +9,9 @@ FastAPI application with:
 """
 
 import json
+import re
 from contextlib import asynccontextmanager
+from datetime import datetime, timezone, timedelta
 from typing import Dict, Any
 
 from fastapi import FastAPI, Request, HTTPException, Header
@@ -125,32 +127,76 @@ async def process_llm_request(request: LLMRequest) -> None:
         # Auto web search: runs here (not in hej_handler) to preserve reply_token time.
         # classify + search takes 5-20s; doing it before enqueue wastes the ~30s window.
         web_search_results = request.web_search_results
-        if not image_base64 and not web_search_results:
+        extracted_content = None
+
+        if not image_base64:
             settings = get_settings()
-            if settings.auto_web_search_enabled and settings.tavily_api_key:
+            from src.services.web_search_service import WebSearchError
+
+            # URL extraction: detect URLs in prompt AND context (quoted message)
+            if settings.tavily_api_key:
                 web_search_service = get_web_search_service()
-                if web_search_service.is_quota_available:
+
+                # Search for URLs in both the prompt and quoted/context text
+                search_text = request.prompt
+                if request.context_text:
+                    search_text += " " + request.context_text
+                url_pattern = re.findall(r'https?://[^\s<>"\'）)\]\}]+', search_text)
+                logger.info(f"URL detection: found {len(url_pattern)} URL(s), prompt='{request.prompt[:40]}', has_context={request.context_text is not None}")
+                if url_pattern:
+                    logger.info(f"Extracting content from {len(url_pattern)} URL(s): {url_pattern}")
+                    try:
+                        extract_response = await web_search_service.extract(urls=url_pattern)
+                        if extract_response.has_results:
+                            extracted_content = extract_response.to_context_text()
+                            logger.info(
+                                f"URL extraction: {len(extract_response.results)} success, "
+                                f"{len(extract_response.failed_urls)} failed"
+                            )
+                        # Fallback: if extract failed for some/all URLs, use search as backup
+                        failed_urls_to_search = extract_response.failed_urls if not extracted_content else []
+                        for failed_url in failed_urls_to_search:
+                            logger.info(f"Extract failed, falling back to search for URL: {failed_url[:80]}")
+                            try:
+                                # Use just the URL as the search query for better results
+                                search_response = await web_search_service.search(
+                                    query=failed_url, max_results=3, include_answer=True,
+                                    search_depth="advanced",
+                                )
+                                if search_response.has_results:
+                                    web_search_results = search_response.to_context_text()
+                                    logger.info(f"Fallback search success for {failed_url[:40]}: {len(search_response.results)} results")
+                                    break  # Got results, no need to try more URLs
+                            except WebSearchError as e:
+                                logger.warning(f"Fallback search failed for {failed_url[:40]}: {e}")
+                    except WebSearchError as e:
+                        logger.warning(f"URL extraction failed (non-critical): {e}")
+
+            # Auto web search (only if no pre-fetched results and no extracted URLs)
+            if not web_search_results and not extracted_content:
+                if settings.auto_web_search_enabled and settings.tavily_api_key:
+                    web_search_service = get_web_search_service()
                     try:
                         needs_search = await ollama_service.classify_needs_search(request.prompt)
                         if needs_search:
                             logger.info(f"Auto search triggered for: {request.prompt[:50]}...")
-                            from src.services.web_search_service import WebSearchError
                             try:
+                                # Prepend current date for time-sensitive queries
+                                tw = timezone(timedelta(hours=8))
+                                today_str = datetime.now(tw).strftime('%Y-%m-%d')
+                                search_query = f"{today_str} {request.prompt}"
                                 search_response = await web_search_service.search(
-                                    query=request.prompt, max_results=3,
+                                    query=search_query, max_results=3, include_answer=True,
                                 )
                                 if search_response.has_results:
                                     web_search_results = search_response.to_context_text()
                                     logger.info(
-                                        f"Auto search results: {len(search_response.results)} results, "
-                                        f"quota remaining: {web_search_service.quota_remaining}"
+                                        f"Auto search results: {len(search_response.results)} results"
                                     )
                             except WebSearchError as e:
                                 logger.warning(f"Auto search failed (non-critical): {e}")
                     except Exception as e:
                         logger.warning(f"Auto search classification failed (non-critical): {e}")
-                else:
-                    logger.info("Auto search skipped: monthly quota exhausted")
 
         # Call Ollama for inference
         response_text = await ollama_service.generate(
@@ -160,6 +206,7 @@ async def process_llm_request(request: LLMRequest) -> None:
             context_text=request.context_text,
             conversation_history=request.conversation_history,
             web_search_results=web_search_results,
+            extracted_content=extracted_content,
         )
 
         # Helper to add bot response to conversation context

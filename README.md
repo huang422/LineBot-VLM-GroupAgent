@@ -11,7 +11,7 @@
 [![Cloudflare](https://img.shields.io/badge/Cloudflare-Tunnel-F38020.svg?logo=cloudflare&logoColor=white)](https://www.cloudflare.com/)
 [![Buy Me A Coffee](https://img.shields.io/badge/Buy%20Me%20a%20Coffee-ffdd00?style=for-the-badge&logo=buy-me-a-coffee&logoColor=black)](https://www.buymeacoffee.com/huang422)
 
-A **production-ready LINE group chatbot** powered by local **Ollama Vision-Language Model (qwen3-vl:8b)**, enabling AI conversations, image analysis, and web search without cloud API dependencies. Features reasoning model support with streaming, automatic simplified→traditional Chinese conversion, time-aware responses, and guaranteed reply mechanisms.
+A **production-ready LINE group chatbot** powered by local **Ollama Vision-Language Model (qwen3-vl:8b)**, enabling AI conversations, image analysis, web search, and webpage content extraction without cloud API dependencies. Features reasoning model support with streaming, automatic simplified→traditional Chinese conversion, time-aware responses, guaranteed reply mechanisms and GPU Async Management.
 
 ---
 
@@ -21,13 +21,14 @@ A **production-ready LINE group chatbot** powered by local **Ollama Vision-Langu
 
 - **AI Conversations** - Natural language Q&A powered by local Ollama reasoning model (qwen3-vl:8b)
 - **Vision Analysis** - Reply to images for instant multimodal analysis with optimized lightweight prompts
-- **Auto Web Search** - LLM-driven search classification: automatically determines if a question needs real-time web data
-- **Manual Web Search** - `!web` command for explicit web search + AI response via Tavily AI
+- **Auto Web Search** - LLM-driven search classification: automatically determines if a question needs real-time web data, date-aware queries
+- **Manual Web Search** - `!web` command for explicit web search + AI response via Tavily AI (advanced depth, AI summary)
+- **Webpage Extraction** - Automatic URL detection in messages, extracts full webpage content via Tavily Extract API with fallback search
 - **Conversation Context** - Automatic tracking of last 3 messages per group for contextual responses
 - **Reasoning Model Support** - Native Ollama thinking/response field separation with think content fallback
 - **Traditional Chinese Enforcement** - All output forced to 繁體中文 via OpenCC (simplified→traditional conversion)
 - **Time Awareness** - Current Taiwan date/time injected into every prompt (no extra API calls)
-- **Guaranteed Reply** - Every request gets a response: reply_token → push_message → think fallback → error notification
+- **Guaranteed Reply** - Every request gets a response: reply_token → push_message → think LLM summarization → marker fallback → error notification
 - **Smart Image Retrieval** - Keyword-based image search from Google Drive
 - **Scheduled Messages** - Cron-based recurring notifications (APScheduler)
 - **Live Configuration** - Google Drive sync for prompts and image mappings
@@ -52,9 +53,10 @@ A **production-ready LINE group chatbot** powered by local **Ollama Vision-Langu
 ┌──────────────────┐   ┌──────────────────────┐
 │  LLM Pipeline    │   │  Image/Config Sync   │
 │  ├─ Rate Limiter │   │  ├─ Google Drive API │
-│  ├─ Auto Search  │   │  ├─ Local Cache      │
-│  ├─ Queue System │   │  └─ Auto-reload      │
-│  ├─ GPU Inference│   └──────────────────────┘
+│  ├─ URL Extract  │   │  ├─ Local Cache      │
+│  ├─ Auto Search  │   │  └─ Auto-reload      │
+│  ├─ Queue System │   └──────────────────────┘
+│  ├─ GPU Inference│
 │  │  (streaming)  │
 │  ├─ Think Filter │
 │  ├─ S2T Convert  │
@@ -69,8 +71,9 @@ A **production-ready LINE group chatbot** powered by local **Ollama Vision-Langu
 |-----------|-----------|---------|
 | **Web Framework** | FastAPI + Uvicorn | Async API server with webhook handling |
 | **LLM Engine** | Ollama (qwen3-vl:8b) | Local GPU-accelerated reasoning VLM with vision |
-| **Web Search** | Tavily AI | Real-time web search for LLM augmentation |
+| **Web Search** | Tavily AI | Real-time web search + webpage content extraction |
 | **Auto Search** | LLM Classification | Two-stage (keyword + LLM) search need detection |
+| **URL Extraction** | Tavily Extract API | Automatic webpage content extraction from URLs |
 | **Messaging** | LINE Messaging API | User interaction and webhook events |
 | **Configuration** | Google Drive API | Collaborative prompt/image management |
 | **Queue** | asyncio.Queue | Sequential GPU request processing with timeout |
@@ -204,9 +207,18 @@ Explicit web search using Tavily AI, results fed to LLM.
 ```
 
 **How it works:**
-1. Tavily AI searches the web (3 results, max 400 chars each)
-2. Results are added to LLM prompt as context
-3. LLM generates a response based on search results
+1. Current date (Taiwan timezone) prepended to query for time-sensitive accuracy
+2. Tavily AI searches the web (advanced depth, 5 results, up to 2000 chars each)
+3. AI-generated summary included alongside search results
+4. Results are added to LLM prompt as context
+5. LLM generates a response based on search results
+
+**URL Extraction** (Automatic):
+```
+!hej 幫我摘要這個網頁 https://example.com  →  Extracts webpage content via Tavily Extract
+!hej [reply to a URL message]              →  Detects URL in quoted message context
+```
+When URL extraction fails (e.g., Twitter/X blocks crawlers), automatically falls back to web search.
 
 **Requirements:**
 - Set `TAVILY_API_KEY` in `.env`
@@ -293,7 +305,7 @@ src/
 │   ├── scheduler_service.py             # APScheduler cron jobs
 │   ├── message_cache_service.py         # Quote/reply message cache
 │   ├── conversation_context_service.py  # Last 3 messages per group
-│   └── web_search_service.py            # Tavily AI with monthly quota
+│   └── web_search_service.py            # Tavily AI search + URL content extraction
 ├── handlers/                            # Command routing
 │   ├── command_handler.py               # !prefix parsing + quote detection
 │   ├── hej_handler.py                   # !hej (auto search + image keyword)
@@ -322,7 +334,10 @@ No manual <think> tag parsing needed.
 1. Queue worker processes request with timeout (180s)
 2. On success: reply_token (FREE) → push_message (fallback)
 3. On timeout: queue sends notification directly
-4. On empty response: extract conclusion from think content
+4. On empty response (think exhaustion):
+   a. LLM summarization of think content (20s timeout)
+   b. Marker-based fallback (結論/總結/答案 markers)
+   c. Last 800 chars of think content
 5. On exception: error message via reply/push
 → Every code path sends a user-visible response
 ```
@@ -348,10 +363,55 @@ return _s2t.convert(response_text)  # 这张图片 → 這張圖片
 **Time Awareness:**
 ```
 Every request's system prompt starts with:
-"現在時間：2026-02-11 星期二 12:20"
+"現在時間：2026-02-12 星期四 12:20"
 
 ~10 tokens overhead, zero API calls.
 Model can answer "今天星期幾？" without web search.
+Search queries also prepend the current date for time-sensitive accuracy.
+```
+
+**GPU Async Management:**
+```
+Problem: GPU can only run one inference at a time.
+         Multiple concurrent requests → VRAM contention → OOM crash.
+
+Solution: Single-worker async queue with semaphore-based concurrency control.
+
+┌──────────────┐   ┌──────────────┐   ┌──────────────┐
+│  Request A   │ → │              │ → │              │
+│  Request B   │ → │  asyncio     │ → │  Semaphore   │ → GPU (1 at a time)
+│  Request C   │ → │  Queue(10)   │ → │  (1)         │
+└──────────────┘   └──────────────┘   └──────────────┘
+    Webhook            Buffered         Sequential
+
+- asyncio.Queue: max 10 pending requests, rejects when full
+- asyncio.Semaphore(1): guarantees single concurrent GPU inference
+- Non-blocking enqueue: webhook returns 200 immediately
+- Background worker: continuously polls queue, processes sequentially
+- Timeout: 180s per request, auto-notifies user on expiration
+- Retry: 1 automatic retry on transient failure (if queue not full)
+```
+
+**VRAM Memory Control:**
+```
+GPU: NVIDIA RTX 4080 (16GB VRAM)
+
+OLLAMA_MAX_VRAM=9663676416 (9GB limit)
+
+Without limit:  Ollama uses ALL 16GB → no room for other processes
+With 9GB limit: ~7GB model weights + ~2GB KV cache
+                Remaining ~7GB available for system/other tasks
+
+Model memory breakdown (qwen3-vl:8b):
+- Model weights:  ~5-6GB (Q4 quantized 8B parameters)
+- KV cache:       ~1-2GB (bounded by num_ctx=8192)
+- CUDA overhead:  ~0.5GB
+
+Additional controls:
+- num_ctx=8192:     Context window cap (limits KV cache memory)
+- num_predict=4096: Max output tokens (limits generation memory)
+- Image resize:     Max 800px (reduces vision encoder memory)
+- Queue max=10:     Bounds total pending work
 ```
 
 ### Data Flow (!hej)
@@ -363,15 +423,17 @@ Model can answer "今天星期幾？" without web search.
 4.  Command parsing (!hej + quoted message detection)
 5.  Rate limit check
 6.  Image keyword check (auto-delegates to !img if match)
-7.  Auto web search classification (keyword → LLM two-stage)
-8.  Web search via Tavily (if needed)
-9.  LLM request enqueued with context + search results
-10. Queue worker processes (180s timeout)
-11. Loading animation sent (FREE)
-12. Ollama streaming inference (thinking + response fields)
-13. OpenCC simplified → traditional Chinese conversion
-14. Reply via reply_token (FREE) → push_message (fallback)
-15. Bot response saved to conversation context
+7.  LLM request enqueued with context
+8.  Queue worker processes (180s timeout)
+9.  Loading animation sent (FREE)
+10. URL detection in prompt + quoted message context
+11. URL found → Tavily Extract (fallback: search by URL)
+12. No URL → Auto search classification (keyword → LLM two-stage)
+13. Date-prefixed web search via Tavily (if needed)
+14. Ollama streaming inference (thinking + response fields)
+15. OpenCC simplified → traditional Chinese conversion
+16. Reply via reply_token (FREE) → push_message (fallback)
+17. Bot response saved to conversation context
 ```
 
 ### Data Flow (Image Analysis)

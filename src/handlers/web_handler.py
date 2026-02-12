@@ -8,6 +8,7 @@ Handles !web commands by:
 4. Enqueuing for processing
 """
 
+from datetime import datetime, timezone, timedelta
 from typing import Dict, Any
 
 from src.handlers.command_handler import ParsedCommand, extract_event_context
@@ -94,14 +95,18 @@ async def handle_web_command(
         return False
 
     try:
-        # Perform web search
-        search_query = command.argument
+        # Perform web search with current date for time-sensitive queries
+        tw = timezone(timedelta(hours=8))
+        today_str = datetime.now(tw).strftime('%Y-%m-%d')
+        search_query = f"{today_str} {command.argument}"
         logger.info(f"Performing web search: {search_query[:50]}...")
 
         try:
             search_response = await web_search_service.search(
                 query=search_query,
-                max_results=3,
+                max_results=5,
+                include_answer=True,
+                search_depth="advanced",
             )
             web_search_results = search_response.to_context_text() if search_response.has_results else None
 

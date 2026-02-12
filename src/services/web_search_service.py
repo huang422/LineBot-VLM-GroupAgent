@@ -46,9 +46,40 @@ class SearchResult:
 
     def to_text(self, index: int) -> str:
         """Format as concise text for LLM context."""
-        # 截斷過長的內容
-        content = self.content[:700] if len(self.content) > 700 else self.content
-        return f"[{index}] {self.title}\n{content}"
+        content = self.content[:2000] if len(self.content) > 2000 else self.content
+        return f"[{index}] {self.title}\nURL: {self.url}\n{content}"
+
+
+@dataclass
+class ExtractResult:
+    """Result from URL content extraction."""
+    url: str
+    content: str
+
+    def to_text(self) -> str:
+        """Format extracted content for LLM context."""
+        content = self.content[:10000] if len(self.content) > 10000 else self.content
+        return f"URL: {self.url}\n{content}"
+
+
+@dataclass
+class ExtractResponse:
+    """Response from URL content extraction."""
+    results: List[ExtractResult]
+    failed_urls: List[str]
+
+    @property
+    def has_results(self) -> bool:
+        return len(self.results) > 0
+
+    def to_context_text(self) -> str:
+        """Format extracted content as context text for LLM."""
+        if not self.results:
+            return ""
+        parts = []
+        for result in self.results:
+            parts.append(result.to_text())
+        return "\n\n---\n\n".join(parts)
 
 
 @dataclass
@@ -56,7 +87,7 @@ class WebSearchResponse:
     """Response from web search."""
     query: str
     results: List[SearchResult]
-    answer: Optional[str] = None  # Tavily can provide AI-generated answer
+    answer: Optional[str] = None  # Tavily AI-generated answer
 
     @property
     def has_results(self) -> bool:
@@ -74,6 +105,11 @@ class WebSearchResponse:
             return ""
 
         parts = []
+
+        # Include Tavily AI answer at the top if available
+        if self.answer:
+            parts.append(f"AI Summary: {self.answer}")
+
         for i, result in enumerate(self.results, 1):
             parts.append(result.to_text(i))
 
@@ -180,7 +216,8 @@ class WebSearchService:
         self,
         query: str,
         max_results: Optional[int] = None,
-        include_answer: bool = False,
+        include_answer: bool = True,
+        search_depth: str = "basic",
     ) -> WebSearchResponse:
         """
         Perform a web search using Tavily API.
@@ -189,6 +226,7 @@ class WebSearchService:
             query: Search query string
             max_results: Override default max results (1-10)
             include_answer: Whether to include AI-generated answer
+            search_depth: "basic" (1 credit) or "advanced" (2 credits, more precise)
 
         Returns:
             WebSearchResponse with search results
@@ -202,19 +240,15 @@ class WebSearchService:
         if not self.is_configured:
             raise WebSearchError("Tavily API key not configured")
 
-        # Check monthly quota
-        if not self.is_quota_available:
-            logger.warning(
-                f"Monthly search quota exhausted: {self._month_search_count}/{self._monthly_quota}"
-            )
-            raise WebSearchError("Monthly search quota exhausted")
-
         # Use provided values or defaults
         num_results = max_results or self.max_results
         num_results = max(1, min(10, num_results))
 
         try:
-            logger.debug(f"Tavily search: '{query[:50]}...', max_results={num_results}")
+            logger.debug(
+                f"Tavily search: '{query[:50]}...', max_results={num_results}, "
+                f"depth={search_depth}, include_answer={include_answer}"
+            )
 
             client = self._get_client()
 
@@ -227,7 +261,7 @@ class WebSearchService:
                     query=query.strip(),
                     max_results=num_results,
                     include_answer=include_answer,
-                    search_depth="basic",  # Use basic to conserve API credits
+                    search_depth=search_depth,
                 )
             )
 
@@ -253,7 +287,7 @@ class WebSearchService:
 
             logger.info(
                 f"Tavily search complete: query='{query[:30]}...', results={len(results)}, "
-                f"quota={self.quota_remaining}/{self._monthly_quota} remaining"
+                f"depth={search_depth}, quota={self.quota_remaining}/{self._monthly_quota} remaining"
             )
 
             return search_response
@@ -261,8 +295,86 @@ class WebSearchService:
         except WebSearchError:
             raise
         except Exception as e:
+            error_str = str(e)
+            # Tavily returns specific errors for quota exceeded
+            if "429" in error_str or "432" in error_str or "limit" in error_str.lower():
+                logger.warning(f"Tavily API quota exceeded: {e}")
+                raise WebSearchError(f"搜尋 API 額度已用完: {error_str}")
             logger.error(f"Tavily search error: {e}", exc_info=True)
-            raise WebSearchAPIError(f"Search failed: {str(e)}")
+            raise WebSearchAPIError(f"Search failed: {error_str}")
+
+    async def extract(
+        self,
+        urls: List[str],
+    ) -> ExtractResponse:
+        """
+        Extract content from URLs using Tavily Extract API.
+
+        Args:
+            urls: List of URLs to extract content from (max 20)
+
+        Returns:
+            ExtractResponse with extracted content
+
+        Raises:
+            WebSearchError: If extraction fails
+        """
+        if not urls:
+            raise ValueError("URL list cannot be empty")
+
+        if not self.is_configured:
+            raise WebSearchError("Tavily API key not configured")
+
+        # Limit to 5 URLs to conserve credits
+        urls = urls[:5]
+
+        try:
+            logger.info(f"Tavily extract: {len(urls)} URLs")
+
+            client = self._get_client()
+
+            import asyncio
+            loop = asyncio.get_event_loop()
+            response = await loop.run_in_executor(
+                None,
+                lambda: client.extract(urls=urls)
+            )
+
+            results = []
+            for item in response.get("results", []):
+                raw_content = item.get("raw_content", "")
+                if raw_content:
+                    results.append(ExtractResult(
+                        url=item.get("url", ""),
+                        content=raw_content,
+                    ))
+
+            failed_urls = []
+            for item in response.get("failed_results", []):
+                failed_url = item.get("url", "")
+                failed_error = item.get("error", "unknown")
+                failed_urls.append(failed_url)
+                logger.warning(f"Tavily extract failed for URL: {failed_url}, error: {failed_error}")
+
+            # Increment monthly counter
+            self._month_search_count += 1
+
+            logger.info(
+                f"Tavily extract complete: {len(results)} success, {len(failed_urls)} failed, "
+                f"quota={self.quota_remaining}/{self._monthly_quota} remaining"
+            )
+
+            return ExtractResponse(results=results, failed_urls=failed_urls)
+
+        except WebSearchError:
+            raise
+        except Exception as e:
+            error_str = str(e)
+            if "429" in error_str or "432" in error_str or "limit" in error_str.lower():
+                logger.warning(f"Tavily API quota exceeded: {e}")
+                raise WebSearchError(f"搜尋 API 額度已用完: {error_str}")
+            logger.error(f"Tavily extract error: {e}", exc_info=True)
+            raise WebSearchAPIError(f"Extract failed: {error_str}")
 
 
 # Global singleton instance
