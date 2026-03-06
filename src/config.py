@@ -41,7 +41,7 @@ class Settings(BaseSettings):
         description="Ollama API base URL"
     )
     ollama_model: str = Field(
-        default="gemma3:12b",
+        default="qwen3.5:9b",
         description="Ollama model name for inference"
     )
     
@@ -116,7 +116,7 @@ class Settings(BaseSettings):
         description="Maximum pending LLM requests in queue"
     )
     queue_timeout_seconds: int = Field(
-        default=180,
+        default=240,
         ge=30,
         le=600,
         description="Request timeout in seconds"
@@ -182,7 +182,7 @@ Be friendly but professional.""",
     # Ollama Model Parameters
     # ==========================================================================
     ollama_num_predict: int = Field(
-        default=4096,
+        default=6144,
         ge=128,
         le=16384,
         description="Max tokens to generate per request (includes thinking + response)"

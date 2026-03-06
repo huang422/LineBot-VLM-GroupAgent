@@ -52,8 +52,12 @@ docker compose logs linebot | grep -o '"groupId": "[^"]*"' | sort -u
 # 檢查模型是否已下載
 docker compose exec ollama ollama list
 
-# 如果沒有 gemma3:4b，執行下載（約 2.5GB，需要幾分鐘）
-docker compose exec ollama ollama pull qwen3-vl:8b
+# 如果沒有 qwen3.5:9b，執行下載（約 5GB，需要幾分鐘）
+docker compose exec ollama ollama pull qwen3.5:9b
+
+# 更新 ollama
+docker pull ollama/ollama:latest
+docker compose down ollama && docker compose up -d ollama
 ```
 
 ---
@@ -336,7 +340,7 @@ docker compose logs -f linebot | grep "Conversation history"
 docker compose exec ollama ping -c 3 google.com
 
 # 重試下載
-docker compose exec ollama ollama pull gemma3:4b
+docker compose exec ollama ollama pull qwen3.5:9b
 
 # 查看下載進度
 docker compose logs -f ollama
@@ -367,10 +371,10 @@ docker compose exec ollama nvidia-smi
 1. **使用更小的模型**：
    ```bash
    # 在 .env 中修改
-   OLLAMA_MODEL=gemma3:2b
+   OLLAMA_MODEL=qwen3.5:9b
 
    # 重新下載模型
-   docker compose exec ollama ollama pull gemma3:2b
+   docker compose exec ollama ollama pull qwen3.5:9b
 
    # 重啟服務
    docker compose restart linebot
@@ -387,7 +391,7 @@ docker compose exec ollama nvidia-smi
 docker compose exec ollama ollama list
 
 # 測試模型推理
-docker compose exec ollama ollama run gemma3:4b "Hello"
+docker compose exec ollama ollama run qwen3.5:9b "Hello"
 ```
 
 ### Q7: 如何完全重置？
@@ -400,7 +404,7 @@ docker compose down -v
 ./start.sh
 
 # 重新下載模型
-docker compose exec ollama ollama pull gemma3:4b
+docker compose exec ollama ollama pull qwen3.5:9b
 ```
 
 ### Q8: LINE 收到訊息但機器人回覆「Error, try again」？
@@ -415,7 +419,7 @@ docker compose logs -f ollama
 docker compose logs -f linebot
 
 # 測試 Ollama 是否正常
-docker compose exec ollama ollama run gemma3:4b "測試"
+docker compose exec ollama ollama run qwen3.5:9b "測試"
 ```
 
 ### Q9: !img 指令無法發送圖片？
@@ -465,7 +469,7 @@ docker compose exec ollama ollama run gemma3:4b "測試"
 
 ```bash
 # 修改模型
-OLLAMA_MODEL=gemma3:4b
+OLLAMA_MODEL=qwen3.5:9b
 
 # 修改 Ollama API 端點
 OLLAMA_BASE_URL=http://ollama:11434
@@ -614,7 +618,7 @@ AI-linebot/
 ✅ **已配置**：
 - LINE Channel Secret
 - LINE Channel Access Token
-- Ollama gemma3:4b 模型
+- Ollama qwen3.5:9b 模型
 - GPU 支援（RTX 4080）
 - Cloudflare Tunnel（臨時 URL）
 

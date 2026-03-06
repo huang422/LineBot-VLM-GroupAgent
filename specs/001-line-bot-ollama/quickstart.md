@@ -49,23 +49,23 @@ curl -fsSL https://ollama.com/install.sh | sh
 ollama --version
 ```
 
-### 1.2 Download gemma3:4b Model
+### 1.2 Download qwen3.5:9b Model
 
 ```bash
 # Pull the model (this will take several minutes)
-ollama pull gemma3:4b
+ollama pull qwen3.5:9b
 
 # Verify model is available
 ollama list
 
 # Test model
-ollama run gemma3:4b "What is 2+2?"
+ollama run qwen3.5:9b "What is 2+2?"
 ```
 
 **Expected Output**:
 ```
 NAME            ID              SIZE      MODIFIED
-gemma3:4b       a1b2c3d4e5f6    4.2 GB    2 minutes ago
+qwen3.5:9b      a1b2c3d4e5f6    5.2 GB    2 minutes ago
 ```
 
 ### 1.3 Start Ollama Service
@@ -265,7 +265,7 @@ GOOGLE_SERVICE_ACCOUNT_FILE=/home/user/Desktop/Tom/AI-linebot/service_account_ke
 
 # Ollama
 OLLAMA_BASE_URL=http://localhost:11434
-OLLAMA_MODEL=gemma3:4b
+OLLAMA_MODEL=qwen3.5:9b
 OLLAMA_TIMEOUT_TEXT=10
 OLLAMA_TIMEOUT_MULTIMODAL=30
 

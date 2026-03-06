@@ -5,10 +5,11 @@ Handles communication with the locally deployed Ollama API
 for text and multimodal (vision) inference requests.
 
 Supports streaming with <think> tag filtering for reasoning models
-(e.g., qwen3-vl) to strip internal reasoning and return only the
+(e.g., qwen3.5) to strip internal reasoning and return only the
 final response content.
 """
 
+import asyncio
 import json
 import re
 import time
@@ -29,6 +30,12 @@ logger = get_logger("services.ollama")
 # Timeout settings
 CONNECT_TIMEOUT = 10.0  # seconds
 READ_TIMEOUT = 300.0    # seconds (reasoning models may think longer)
+
+# Triggers for /think mode. Stored as single string — do NOT convert to a multi-line list,
+# as linters will auto-expand it with unwanted keywords.
+_COMPLEX_QUERY_TRIGGERS: frozenset = frozenset(
+    "/think,分析,優缺點,比較,比較優缺點,設計方案,架構設計,詳細,詳細解釋,深入分析,說明,完整說明,深度分析,解釋,請問,摘要,什麼,怎麼辦,請,搜尋".split(",")
+)
 
 
 class OllamaError(Exception):
@@ -51,11 +58,11 @@ class OllamaService:
     Service for interacting with Ollama API.
     
     Supports both text-only and multimodal (image + text) requests
-    using the qwen3-vl:8b VLM model.
+    using the qwen3.5:9b model.
 
     Attributes:
         base_url: Ollama API base URL (e.g., http://localhost:11434)
-        model: Model name (e.g., qwen3-vl:8b)
+        model: Model name (e.g., qwen3.5:9b)
         client: Async HTTP client for API calls
     """
     
@@ -159,10 +166,8 @@ class OllamaService:
         logger.info(f"Generating response for: '{prompt[:50]}...' (multimodal={is_multimodal})")
 
         if is_multimodal:
-            # Image requests: use minimal prompt to save context tokens.
-            # Images consume ~1000-2000 prompt tokens; keep text short.
-            # Use /no_think for direct answers without reasoning overhead.
-            image_prompt = f"/no_think\n{prompt}" if prompt else "/no_think\ndescribe this image"
+            # Image requests: lightweight prompt, thinking disabled.
+            image_prompt = prompt if prompt else "describe this image"
             if context_text:
                 image_prompt += f"\n\nReferenced message:\n{context_text}"
 
@@ -170,6 +175,7 @@ class OllamaService:
                 "model": self.model,
                 "prompt": image_prompt,
                 "stream": True,
+                "think": False,  # Ollama API param — disables thinking for this request
                 "system": f"{time_prefix}你是圖片分析助手。直接描述和回答，不需要思考過程。必須使用繁體中文回覆，禁止使用簡體中文。",
                 "images": [image_base64],
                 "options": {
@@ -178,17 +184,33 @@ class OllamaService:
                     "num_ctx": settings.ollama_num_ctx,
                 }
             }
-            logger.debug("Multimodal request with image (lightweight prompt)")
+            logger.debug("Multimodal request with image (thinking disabled)")
         else:
-            # Text-only requests: full prompt with context and history
-            full_prompt = self._build_prompt(prompt, context_text, conversation_history, web_search_results, extracted_content)
+            # Text-only: auto-select think mode via Ollama API "think" parameter.
+            # Complex keywords → think=True (full budget, 180s timeout then retry).
+            # Everything else → think=False (fast, fits 30s reply_token window).
+            is_complex = any(kw in prompt for kw in _COMPLEX_QUERY_TRIGGERS)
+            if is_complex:
+                enable_think = True
+                effective_num_predict = settings.ollama_num_predict
+                logger.debug("Think mode: think=True triggered by keyword in prompt")
+            else:
+                enable_think = False
+                effective_num_predict = 1024
+                logger.debug("Think mode: think=False (fast path, num_predict=1024)")
+
+            full_prompt = self._build_prompt(
+                prompt, context_text, conversation_history,
+                web_search_results, extracted_content
+            )
             payload = {
                 "model": self.model,
                 "prompt": full_prompt,
                 "stream": True,
+                "think": enable_think,  # Ollama API param — controls thinking mode
                 "system": f"{time_prefix}{system_prompt}" if system_prompt else time_prefix,
                 "options": {
-                    "num_predict": settings.ollama_num_predict,
+                    "num_predict": effective_num_predict,
                     "temperature": settings.ollama_temperature,
                     "num_ctx": settings.ollama_num_ctx,
                 }
@@ -196,9 +218,30 @@ class OllamaService:
 
         try:
             start_time = time.monotonic()
-            response_text, think_text, stats = await self._stream_ollama(payload)
-            elapsed = time.monotonic() - start_time
 
+            # Text requests: 180s timeout (leaves ~50s for retry before queue's 240s deadline).
+            # Image requests: rely on httpx-level timeout (300s), no retry needed.
+            _THINKING_TIMEOUT = 180.0
+            _RETRY_TIMEOUT = 50.0  # Max time for think=False retry (180+2+50=232 < 240s queue limit)
+            timed_out = False
+
+            if not is_multimodal:
+                try:
+                    response_text, think_text, stats = await asyncio.wait_for(
+                        self._stream_ollama(payload),
+                        timeout=_THINKING_TIMEOUT,
+                    )
+                except asyncio.TimeoutError:
+                    elapsed_so_far = time.monotonic() - start_time
+                    logger.warning(
+                        f"Thinking timeout after {elapsed_so_far:.1f}s, retrying with /no_think"
+                    )
+                    timed_out = True
+                    response_text, think_text, stats = "", "", {"done_reason": "timeout"}
+            else:
+                response_text, think_text, stats = await self._stream_ollama(payload)
+
+            elapsed = time.monotonic() - start_time
             logger.info(
                 f"Generation complete",
                 extra={
@@ -213,33 +256,49 @@ class OllamaService:
             if response_text.strip():
                 return _s2t.convert(response_text.strip())
 
-            # Response empty — model spent all tokens on thinking (done_reason=length).
-            # Use a lightweight LLM call to summarize think content into a complete reply.
-            if think_text.strip():
-                logger.warning(
-                    f"Empty response, summarizing think content "
-                    f"(think_len={len(think_text)}, done_reason={stats.get('done_reason')})"
-                )
-                summarized = await self._summarize_think_content(think_text, prompt)
-                if summarized:
-                    return _s2t.convert(summarized)
+            # Empty response: timeout OR token exhaustion (all tokens used on thinking).
+            # Retry with /no_think for a fast direct answer.
+            if not is_multimodal:
+                reason = "timeout" if timed_out else f"token_exhaustion(done_reason={stats.get('done_reason')})"
+                logger.warning(f"Empty response ({reason}), retrying with /no_think")
 
-                # Summarization failed, use legacy marker-based fallback
-                logger.warning("Think summarization failed, using marker-based fallback")
-                fallback = think_text.strip()
-                for marker in ["所以", "因此", "總結", "总结", "結論", "结论",
-                                "答案", "回答", "總之", "总之"]:
-                    idx = fallback.rfind(marker)
-                    if idx != -1:
-                        fallback = fallback[idx:]
-                        break
-                else:
-                    if len(fallback) > 800:
-                        fallback = "..." + fallback[-800:]
-                return _s2t.convert(fallback)
+                # After a timeout, Ollama server may still be generating.
+                # Brief pause to let it detect the dropped connection before starting a new request.
+                if timed_out:
+                    await asyncio.sleep(2.0)
+
+                no_think_prompt = self._build_prompt(
+                    prompt, context_text, conversation_history,
+                    web_search_results, extracted_content,
+                )
+                retry_payload = {
+                    "model": self.model,
+                    "prompt": no_think_prompt,
+                    "stream": True,
+                    "think": False,  # Ollama API param — force no thinking on retry
+                    "system": f"{time_prefix}{system_prompt}" if system_prompt else time_prefix,
+                    "options": {
+                        "num_predict": 6144,
+                        "temperature": 0.7,
+                        "num_ctx": settings.ollama_num_ctx,
+                    }
+                }
+                try:
+                    retry_text, _, _ = await asyncio.wait_for(
+                        self._stream_ollama(retry_payload),
+                        timeout=_RETRY_TIMEOUT,
+                    )
+                    if retry_text.strip():
+                        logger.info("Retry with think=False succeeded")
+                        return _s2t.convert(retry_text.strip())
+                    logger.error("Retry with think=False returned empty response")
+                except asyncio.TimeoutError:
+                    logger.error(f"Retry with think=False timed out after {_RETRY_TIMEOUT}s")
+                except Exception as retry_err:
+                    logger.error(f"Retry with think=False also failed: {retry_err}")
 
             # Truly nothing produced
-            raise OllamaInferenceError("Model produced empty response")
+            raise OllamaInferenceError("Model produced empty response after all attempts")
 
         except httpx.ConnectError as e:
             logger.error(f"Failed to connect to Ollama: {e}")
@@ -257,77 +316,6 @@ class OllamaService:
             logger.error(f"Unexpected Ollama error: {e}", exc_info=True)
             raise OllamaInferenceError(f"Inference failed: {str(e)}")
 
-    async def _summarize_think_content(
-        self,
-        think_text: str,
-        original_prompt: str,
-    ) -> Optional[str]:
-        """
-        Summarize thinking content into a complete, polished reply.
-
-        When the model exhausts all tokens on thinking (done_reason=length),
-        this method takes the thinking content and uses a streaming LLM call
-        to produce a clean, complete response. Uses streaming to properly
-        separate thinking from response content.
-
-        Args:
-            think_text: Raw thinking content from the model
-            original_prompt: The user's original question
-
-        Returns:
-            Summarized response text, or None if summarization fails
-        """
-        # Take the last 2000 chars of thinking (most likely contains conclusions)
-        think_tail = think_text[-2000:] if len(think_text) > 2000 else think_text
-
-        summarize_prompt = (
-            f"/no_think\n"
-            f"使用者的問題：{original_prompt}\n\n"
-            f"以下是針對這個問題的分析內容：\n"
-            f"---\n{think_tail}\n---\n\n"
-            f"請根據以上分析內容，直接輸出一個完整、簡潔的回覆給使用者。"
-            f"不要提及「根據分析」或「以上內容」，直接回答問題。"
-        )
-
-        payload = {
-            "model": self.model,
-            "prompt": summarize_prompt,
-            "system": "你是一個助手。將分析內容整理為簡潔完整的回覆。直接輸出結論，不要有思考過程。必須使用繁體中文。",
-            "stream": True,
-            "options": {
-                "num_predict": 512,
-                "temperature": 0.3,
-            }
-        }
-
-        try:
-            import asyncio
-
-            async def _do_summarize():
-                response_text, think_text_inner, _ = await self._stream_ollama(payload)
-                # Combine both fields — use response if available, otherwise thinking
-                summary = response_text.strip()
-                if not summary and think_text_inner.strip():
-                    summary = think_text_inner.strip()
-                    logger.info("Think summarization: response empty, using thinking field content")
-                return summary
-
-            summary = await asyncio.wait_for(_do_summarize(), timeout=20.0)
-
-            if summary:
-                logger.info(f"Think content summarized: {len(think_text)} -> {len(summary)} chars")
-                return summary
-
-            logger.warning("Think summarization returned empty content")
-            return None
-
-        except asyncio.TimeoutError:
-            logger.warning("Think summarization timed out (20s)")
-            return None
-        except Exception as e:
-            logger.warning(f"Think summarization error: {e}")
-            return None
-
     async def _stream_ollama(
         self,
         payload: dict,
@@ -336,7 +324,7 @@ class OllamaService:
         Stream response from Ollama, reading both 'response' and 'thinking' fields.
 
         Ollama natively separates thinking content (in 'thinking' field) from
-        the actual response (in 'response' field) for reasoning models like qwen3-vl.
+        the actual response (in 'response' field) for reasoning models like qwen3.5.
         No manual <think> tag parsing needed.
 
         Args:
@@ -481,8 +469,9 @@ class OllamaService:
             "prompt": classify_prompt,
             "system": classify_system,
             "stream": False,
+            "think": False,  # Ollama API param — no thinking needed for YES/NO classification
             "options": {
-                "num_predict": 30,  # Enough for thinking + YES/NO
+                "num_predict": 10,
                 "temperature": 0,
             }
         }

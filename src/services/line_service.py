@@ -8,14 +8,12 @@ Handles LINE platform integration including:
 - Image message handling
 """
 
-import asyncio
 from typing import Optional, Dict, Any, List
 from io import BytesIO
 import httpx
 
 from src.config import get_settings
 from src.utils.logger import get_logger
-from src.utils.validators import validate_line_signature
 
 logger = get_logger("services.line")
 
@@ -88,31 +86,6 @@ class LineService:
         """Close the HTTP client."""
         await self.client.aclose()
     
-    def validate_signature(self, body: bytes, signature: str) -> bool:
-        """
-        Validate webhook signature.
-        
-        Args:
-            body: Raw request body bytes
-            signature: X-Line-Signature header
-            
-        Returns:
-            True if signature is valid
-        """
-        return validate_line_signature(body, signature, self.channel_secret)
-    
-    def parse_webhook_events(self, body: Dict[str, Any]) -> List[Dict[str, Any]]:
-        """
-        Parse webhook body into events.
-        
-        Args:
-            body: Parsed JSON webhook body
-            
-        Returns:
-            List of event dictionaries
-        """
-        return body.get("events", [])
-    
     async def reply_text(
         self,
         reply_token: str,
@@ -123,7 +96,7 @@ class LineService:
         Send a text reply using reply token.
 
         Args:
-            reply_token: LINE reply token (valid ~60s)
+            reply_token: LINE reply token (validity varies; use within 30s to be safe)
             text: Message text to send
             notification_disabled: If True, don't trigger notification
 
@@ -306,38 +279,6 @@ class LineService:
             logger.debug(f"Loading animation error: {e}")
             return False
 
-    async def get_message_content(self, message_id: str) -> Optional[BytesIO]:
-        """
-        Download message content (image, video, etc.).
-        
-        Downloads content directly into memory without disk storage.
-        
-        Args:
-            message_id: LINE message ID
-            
-        Returns:
-            BytesIO containing the content, or None if failed
-        """
-        try:
-            response = await self.client.get(
-                f"{LINE_DATA_API_BASE}/bot/message/{message_id}/content",
-            )
-            
-            if response.status_code == 200:
-                content = BytesIO(response.content)
-                content_type = response.headers.get("content-type", "unknown")
-                logger.debug(
-                    f"Downloaded content: {len(response.content)} bytes, type={content_type}"
-                )
-                return content
-            else:
-                logger.error(f"Content download failed: {response.status_code}")
-                return None
-                
-        except Exception as e:
-            logger.error(f"Content download error: {e}")
-            return None
-    
     async def get_message_content_with_type(
         self, 
         message_id: str

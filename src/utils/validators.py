@@ -121,36 +121,6 @@ def detect_prompt_injection(prompt: str) -> Optional[str]:
     return None
 
 
-def validate_line_user_id(user_id: str) -> bool:
-    """
-    Validate LINE user ID format.
-    
-    Args:
-        user_id: LINE user ID to validate
-        
-    Returns:
-        True if valid format (Uxxxxxxxx...)
-    """
-    if not user_id:
-        return False
-    return bool(re.match(r"^U[a-f0-9]{32}$", user_id))
-
-
-def validate_line_group_id(group_id: str) -> bool:
-    """
-    Validate LINE group or room ID format.
-    
-    Args:
-        group_id: LINE group/room ID to validate
-        
-    Returns:
-        True if valid format (Cxxxxxxxx... or Rxxxxxxxx...)
-    """
-    if not group_id:
-        return False
-    return bool(re.match(r"^[CR][a-f0-9]{32}$", group_id))
-
-
 def mask_sensitive_data(data: str, visible_chars: int = 4) -> str:
     """
     Mask sensitive data for logging, showing only first/last chars.

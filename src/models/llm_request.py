@@ -33,7 +33,7 @@ class LLMRequest:
         prompt: User question text from !hej or !web command
         system_prompt: System prompt for LLM behavior
         timestamp: When request was created
-        reply_token: LINE reply token (valid for ~60s, optional)
+        reply_token: LINE reply token (validity varies; use within 30s to be safe)
         context_text: Quoted message text for reply-based interaction
         context_image_base64: Base64-encoded image for multimodal requests
         conversation_history: Recent conversation context (formatted string)

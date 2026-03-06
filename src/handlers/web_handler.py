@@ -27,7 +27,6 @@ from src.utils.logger import get_logger
 logger = get_logger("handlers.web")
 
 # Response messages
-MSG_QUEUED = "🔄 收到！正在搜尋並處理您的請求..."
 MSG_QUEUE_FULL = "⚠️ 抱歉，系統目前繁忙。請稍後再試。"
 MSG_RATE_LIMITED = "⚠️ 您的請求太頻繁了。請在 {seconds} 秒後再試。"
 MSG_EMPTY_PROMPT = "❓ 請在 !web 後輸入您的搜尋問題。例如：!web 台灣最新新聞"

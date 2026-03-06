@@ -10,6 +10,7 @@ FastAPI application with:
 
 import json
 import re
+import time
 from contextlib import asynccontextmanager
 from datetime import datetime, timezone, timedelta
 from typing import Dict, Any
@@ -72,6 +73,7 @@ async def process_llm_request(request: LLMRequest) -> None:
     line_service = get_line_service()
     ollama_service = get_ollama_service()
 
+    request_start = time.monotonic()
     logger.info(
         f"Processing LLM request",
         extra={
@@ -83,7 +85,7 @@ async def process_llm_request(request: LLMRequest) -> None:
 
     # Send loading animation (FREE, shows typing indicator to users)
     try:
-        await line_service.send_loading_animation(request.user_id, loading_seconds=60)
+        await line_service.send_loading_animation(request.group_id, loading_seconds=60)
     except Exception:
         pass  # Non-critical, continue processing
 
@@ -217,6 +219,7 @@ async def process_llm_request(request: LLMRequest) -> None:
             logger.debug("Added bot response to conversation context")
 
         # Guaranteed reply: try reply_token (FREE) → fallback push_message
+        elapsed = time.monotonic() - request_start
         sent = False
         if request.reply_token:
             success, sent_message_id, sent_text = await line_service.reply_text(
@@ -225,7 +228,7 @@ async def process_llm_request(request: LLMRequest) -> None:
             )
             if success:
                 logger.info(
-                    f"Response sent via reply_token (FREE)",
+                    f"[FREE] reply_token | elapsed={elapsed:.1f}s",
                     extra={"request_id": request.request_id}
                 )
                 if sent_message_id:
@@ -242,13 +245,13 @@ async def process_llm_request(request: LLMRequest) -> None:
             )
             if push_success:
                 logger.info(
-                    f"Response sent via push message",
+                    f"[PAID] push_message | elapsed={elapsed:.1f}s",
                     extra={"request_id": request.request_id}
                 )
                 add_bot_response_to_context()
             else:
                 logger.error(
-                    f"CRITICAL: Failed to send response via both reply and push",
+                    f"CRITICAL: failed to send via both reply and push | elapsed={elapsed:.1f}s",
                     extra={"request_id": request.request_id}
                 )
 
@@ -336,7 +339,7 @@ async def lifespan(app: FastAPI):
             hour=21,
             minute=0,
             group_id=settings.scheduled_group_id,
-            message="明天操一下嗎?",
+            message="明天操一下嗎",
         )
 
         # 排程 2: 每週一晚上 9:30
@@ -347,6 +350,72 @@ async def lifespan(app: FastAPI):
             minute=30,
             group_id=settings.scheduled_group_id,
             message="啊哈！@鳳梨 還沒回覆督促一下",
+        )
+
+        # 排程 3: 保羅
+        scheduler_service.add_yearly_message(
+            job_id="birthday_reminder_0312",
+            month=3,
+            day=12,
+            hour=9,
+            minute=0,
+            group_id=settings.scheduled_group_id,
+            message="啊哈！@保羅 生日快樂！",
+        )
+
+        # 排程 4: 昱安
+        scheduler_service.add_yearly_message(
+            job_id="birthday_reminder_0328",
+            month=3,
+            day=28,
+            hour=9,
+            minute=0,
+            group_id=settings.scheduled_group_id,
+            message="啊哈！@昱安 生日快樂！",
+        )
+
+        # 排程 5: 湯姆
+        scheduler_service.add_yearly_message(
+            job_id="birthday_reminder_0422",
+            month=4,
+            day=22,
+            hour=9,
+            minute=0,
+            group_id=settings.scheduled_group_id,
+            message="啊哈！@湯姆 生日快樂！",
+        )
+
+        # 排程 6: 鳳梨
+        scheduler_service.add_yearly_message(
+            job_id="birthday_reminder_0122",
+            month=1,
+            day=22,
+            hour=9,
+            minute=0,
+            group_id=settings.scheduled_group_id,
+            message="啊哈！@鳳梨皮 生日快樂！",
+        )
+
+        # 排程 7: 鴨森
+        scheduler_service.add_yearly_message(
+            job_id="birthday_reminder_1115",
+            month=11,
+            day=15,
+            hour=9,
+            minute=0,
+            group_id=settings.scheduled_group_id,
+            message="啊哈！@鴨森 生日快樂！",
+        )
+
+        # 排程 8: 淞哥
+        scheduler_service.add_yearly_message(
+            job_id="birthday_reminder_1006",
+            month=10,
+            day=6,
+            hour=9,
+            minute=0,
+            group_id=settings.scheduled_group_id,
+            message="啊哈！@淞哥 生日快樂！",
         )
 
         logger.info("✅ Scheduled messages configured")

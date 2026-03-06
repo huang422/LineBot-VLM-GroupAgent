@@ -2,17 +2,16 @@
 
 [![Python](https://img.shields.io/badge/Python-3.11+-blue.svg?logo=python&logoColor=white)](https://www.python.org/)
 [![FastAPI](https://img.shields.io/badge/FastAPI-0.109+-009688.svg?logo=fastapi&logoColor=white)](https://fastapi.tiangolo.com/)
-[![Ollama](https://img.shields.io/badge/Ollama-qwen3--vl:8b-000000.svg?logo=ollama&logoColor=white)](https://ollama.ai/)
+[![Ollama](https://img.shields.io/badge/Ollama-qwen3.5:9b-000000.svg?logo=ollama&logoColor=white)](https://ollama.ai/)
 [![LINE](https://img.shields.io/badge/LINE-Messaging%20API-00C300.svg?logo=line&logoColor=white)](https://developers.line.biz/)
 [![Docker](https://img.shields.io/badge/Docker-Compose-2496ED.svg?logo=docker&logoColor=white)](https://docs.docker.com/compose/)
 [![Google Drive](https://img.shields.io/badge/Google%20Drive-API-4285F4.svg?logo=googledrive&logoColor=white)](https://developers.google.com/drive)
 [![APScheduler](https://img.shields.io/badge/APScheduler-3.10+-orange.svg)](https://apscheduler.readthedocs.io/)
 [![CUDA](https://img.shields.io/badge/NVIDIA-CUDA-76B900.svg?logo=nvidia&logoColor=white)](https://developer.nvidia.com/cuda-zone)
 [![Cloudflare](https://img.shields.io/badge/Cloudflare-Tunnel-F38020.svg?logo=cloudflare&logoColor=white)](https://www.cloudflare.com/)
-[![License: GPL v3](https://img.shields.io/badge/License-GPLv3-blue.svg)](https://www.gnu.org/licenses/gpl-3.0.html)
 [![Buy Me A Coffee](https://img.shields.io/badge/Buy%20Me%20a%20Coffee-ffdd00?style=for-the-badge&logo=buy-me-a-coffee&logoColor=black)](https://www.buymeacoffee.com/huang422)
 
-A **production-ready LINE group chatbot** powered by local **Ollama Vision-Language Model (qwen3-vl:8b)**, enabling AI conversations, image analysis, web search, and webpage content extraction without cloud API dependencies. Features reasoning model support with streaming, automatic simplified→traditional Chinese conversion, time-aware responses, guaranteed reply mechanisms and GPU Async Management.
+A **production-ready LINE group chatbot** powered by local **Ollama reasoning model (qwen3.5:9b)**, enabling AI conversations, image analysis, web search, and webpage content extraction without cloud API dependencies. Features reasoning model support with streaming, automatic simplified→traditional Chinese conversion, time-aware responses, guaranteed reply mechanisms and GPU Async Management.
 
 ---
 
@@ -20,16 +19,16 @@ A **production-ready LINE group chatbot** powered by local **Ollama Vision-Langu
 
 ### Core Capabilities
 
-- **AI Conversations** - Natural language Q&A powered by local Ollama reasoning model (qwen3-vl:8b)
+- **AI Conversations** - Natural language Q&A powered by local Ollama reasoning model (qwen3.5:9b)
 - **Vision Analysis** - Reply to images for instant multimodal analysis with optimized lightweight prompts
 - **Auto Web Search** - LLM-driven search classification: automatically determines if a question needs real-time web data, date-aware queries
 - **Manual Web Search** - `!web` command for explicit web search + AI response via Tavily AI (advanced depth, AI summary)
 - **Webpage Extraction** - Automatic URL detection in messages, extracts full webpage content via Tavily Extract API with fallback search
-- **Conversation Context** - Automatic tracking of last 3 messages per group for contextual responses
-- **Reasoning Model Support** - Native Ollama thinking/response field separation with think content fallback
+- **Conversation Context** - Automatic tracking of last 5 messages per group for contextual responses
+- **Smart Think Routing** - Auto-detects complex queries for `think=True` mode; simple queries use `think=False` (fast, fits 30s reply_token window); 180s timeout then guaranteed retry with `think=False`
 - **Traditional Chinese Enforcement** - All output forced to 繁體中文 via OpenCC (simplified→traditional conversion)
 - **Time Awareness** - Current Taiwan date/time injected into every prompt (no extra API calls)
-- **Guaranteed Reply** - Every request gets a response: reply_token → push_message → think LLM summarization → marker fallback → error notification
+- **Guaranteed Reply** - Every request gets a response: reply_token (FREE) → push_message (PAID, with elapsed time logged); timeout/error auto-notifies user
 - **Smart Image Retrieval** - Keyword-based image search from Google Drive
 - **Scheduled Messages** - Cron-based recurring notifications (APScheduler)
 - **Live Configuration** - Google Drive sync for prompts and image mappings
@@ -45,7 +44,7 @@ A **production-ready LINE group chatbot** powered by local **Ollama Vision-Langu
 │  FastAPI Server                                             │
 │  ├─ Webhook Signature Validation (HMAC-SHA256)              │
 │  ├─ Command Parser (!hej, !img, !web, !reload)              │
-│  ├─ Context Manager (Last 3 messages/group)                 │
+│  ├─ Context Manager (Last 5 messages/group)                 │
 │  └─ Handler Router                                          │
 └────────────────────┬────────────────────────────────────────┘
                      ↓
@@ -71,7 +70,7 @@ A **production-ready LINE group chatbot** powered by local **Ollama Vision-Langu
 | Component | Technology | Purpose |
 |-----------|-----------|---------|
 | **Web Framework** | FastAPI + Uvicorn | Async API server with webhook handling |
-| **LLM Engine** | Ollama (qwen3-vl:8b) | Local GPU-accelerated reasoning VLM with vision |
+| **LLM Engine** | Ollama (qwen3.5:9b) | Local GPU-accelerated reasoning model |
 | **Web Search** | Tavily AI | Real-time web search + webpage content extraction |
 | **Auto Search** | LLM Classification | Two-stage (keyword + LLM) search need detection |
 | **URL Extraction** | Tavily Extract API | Automatic webpage content extraction from URLs |
@@ -118,7 +117,7 @@ LINE_CHANNEL_ACCESS_TOKEN=your_token_here
 docker compose up -d
 
 # Pull the VLM model (first time only, ~5GB)
-docker compose exec ollama ollama pull qwen3-vl:8b
+docker compose exec ollama ollama pull qwen3.5:9b
 
 # Get the public webhook URL
 docker compose logs cloudflared | grep trycloudflare.com
@@ -182,7 +181,7 @@ Add the bot to a LINE group:
 User A: "今天天氣真好"
 User B: "要不要去打球?"
 User A: "!hej 幾點集合?"
-→ Bot sees last 3 messages, understands the basketball context
+→ Bot sees last 5 messages, understands the basketball context
 ```
 
 **Smart Keyword** (Auto-delegates to !img):
@@ -243,9 +242,9 @@ LINE_CHANNEL_ACCESS_TOKEN=your_token
 
 **Optional - Ollama Model:**
 ```bash
-OLLAMA_MODEL=qwen3-vl:8b              # Reasoning VLM model
+OLLAMA_MODEL=qwen3.5:9b               # Reasoning model
 OLLAMA_BASE_URL=http://localhost:11434 # Ollama API endpoint
-OLLAMA_NUM_PREDICT=4096                # Max tokens (thinking + response)
+OLLAMA_NUM_PREDICT=6144                # Max tokens (thinking + response)
 OLLAMA_TEMPERATURE=0.7                 # Creativity (0=deterministic)
 OLLAMA_NUM_CTX=8192                    # Context window (8192 for image support)
 ```
@@ -255,7 +254,7 @@ OLLAMA_NUM_CTX=8192                    # Context window (8192 for image support)
 RATE_LIMIT_MAX_REQUESTS=30          # Per-user quota per window
 RATE_LIMIT_WINDOW_SECONDS=60        # Window duration
 QUEUE_MAX_SIZE=10                   # Max pending requests
-QUEUE_TIMEOUT_SECONDS=180           # Request timeout (allows longer thinking)
+QUEUE_TIMEOUT_SECONDS=240           # Request timeout (180s think + 2s sleep + 50s retry)
 ```
 
 **Optional - Google Drive:**
@@ -305,7 +304,7 @@ src/
 │   ├── rate_limit_service.py            # Per-user sliding window
 │   ├── scheduler_service.py             # APScheduler cron jobs
 │   ├── message_cache_service.py         # Quote/reply message cache
-│   ├── conversation_context_service.py  # Last 3 messages per group
+│   ├── conversation_context_service.py  # Last 5 messages per group
 │   └── web_search_service.py            # Tavily AI search + URL content extraction
 ├── handlers/                            # Command routing
 │   ├── command_handler.py               # !prefix parsing + quote detection
@@ -320,36 +319,85 @@ src/
 
 ### Key Design Decisions
 
-**Reasoning Model with Streaming:**
+**Think / No-Think Routing:**
 ```
-Ollama qwen3-vl:8b returns two separate JSON fields:
-  - "thinking": internal reasoning (hidden from user)
-  - "response": final answer (shown to user)
+Ollama qwen3.5:9b streaming API returns two separate fields:
+  - "thinking" : internal reasoning (always hidden from user)
+  - "response" : final answer (sent to user)
 
-Stream processing reads both fields in real-time.
-No manual <think> tag parsing needed.
+Controlled via Ollama API parameter "think": true/false (NOT text prefix).
+
+  think=False  (no-think mode, ~80% of queries)
+  ──────────────────────────────────────────────
+  Trigger : no complex keywords detected
+  Use case: casual chat, basic Q&A, image analysis
+  Tokens  : num_predict=1024
+  Speed   : 5–15s typical
+  Reply   : likely within 30s → reply_token (FREE)
+
+  think=True  (think mode, complex keywords detected)
+  ──────────────────────────────────────────────
+  Use case: in-depth analysis, architecture design, comparisons
+  Tokens  : num_predict=6144 (shared by thinking + response)
+            ⚠ thinking tokens are consumed FIRST; if thinking uses 3800
+               tokens, only 296 remain for the actual response
+  Speed   : 20–180s depending on complexity
+  Reply   : likely >30s → reply_token expired → push_message (PAID)
+  Fallback: if response empty (token exhaustion) OR timeout at 180s
+            → sleep 2s → retry with think=False, num_predict=1024 (≤50s)
+
+  Image analysis (separate path)
+  ──────────────────────────────────────────────
+  Always think=False (save tokens for vision encoder)
+  num_predict=6144 (image tokens are large)
+  Speed: 5–10s typical
 ```
 
-**Guaranteed Reply Mechanism:**
+**Reply Timing & Cost:**
 ```
-1. Queue worker processes request with timeout (180s)
-2. On success: reply_token (FREE) → push_message (fallback)
-3. On timeout: queue sends notification directly
-4. On empty response (think exhaustion):
-   a. LLM summarization of think content (20s timeout)
-   b. Marker-based fallback (結論/總結/答案 markers)
-   c. Last 800 chars of think content
-5. On exception: error message via reply/push
-→ Every code path sends a user-visible response
+T+0s    Webhook received → return 200 OK immediately (LINE requirement)
+T+0s    Loading animation sent (FREE, shows "typing..." for 60s)
+T+0s    LLM inference starts (includes auto-search classify + Tavily)
+
+─────────────── 30s boundary: reply_token validity ───────────────
+
+T<30s   LLM done → reply via reply_token         [FREE]
+         log: [FREE] reply_token | elapsed=Xs
+
+T>30s   LLM done → reply_token expired
+         → push_message fallback               [PAID]
+         log: [PAID] push_message | elapsed=Xs
+
+─────────────── 180s: thinking timeout ───────────────
+
+T=180s  think=True timed out → cancel inference
+         → sleep 2s (let Ollama release connection)
+         → retry: think=False, num_predict=1024 (timeout: 50s)
+         → done at ~T+193s → push_message       [PAID]
+         log: Retry with think=False succeeded
+
+T<180s  think=True token exhaustion (6144 tokens fully consumed by thinking)
+         → empty response → immediate retry: think=False, num_predict=1024
+         log: Empty response (token_exhaustion), retrying
+
+─────────────── 240s: queue hard timeout ───────────────
+
+T=240s  Queue worker timeout → notify user      [FREE or PAID]
+         "⚠️ 處理時間過長，請稍後再試。"
+
+Exception → notify user                         [FREE or PAID]
+         "❌ 處理請求時發生錯誤，請稍後再試。"
+
+Every code path delivers a user-visible response.
 ```
 
 **Image Analysis Optimization:**
 ```
 Text requests:  full system prompt + context + history (~2000 tokens)
-Image requests: minimal prompt + /no_think (~500 tokens)
+Image requests: minimal prompt, think=False via API (~500 tokens)
 
 Images are resized to max 800px (saves ~1000 prompt tokens vs 1920px)
-Minimum 64px enforced (qwen3-vl crashes on < 32px)
+Minimum 64px enforced (avoids issues with very small images)
 ```
 
 **Simplified → Traditional Chinese:**
@@ -389,7 +437,7 @@ Solution: Single-worker async queue with semaphore-based concurrency control.
 - asyncio.Semaphore(1): guarantees single concurrent GPU inference
 - Non-blocking enqueue: webhook returns 200 immediately
 - Background worker: continuously polls queue, processes sequentially
-- Timeout: 180s per request, auto-notifies user on expiration
+- Timeout: 240s per request (queue hard deadline), auto-notifies user on expiration
 - Retry: 1 automatic retry on transient failure (if queue not full)
 ```
 
@@ -403,14 +451,14 @@ Without limit:  Ollama uses ALL 16GB → no room for other processes
 With 9GB limit: ~7GB model weights + ~2GB KV cache
                 Remaining ~7GB available for system/other tasks
 
-Model memory breakdown (qwen3-vl:8b):
+Model memory breakdown (qwen3.5:9b):
 - Model weights:  ~5-6GB (Q4 quantized 8B parameters)
 - KV cache:       ~1-2GB (bounded by num_ctx=8192)
 - CUDA overhead:  ~0.5GB
 
 Additional controls:
 - num_ctx=8192:     Context window cap (limits KV cache memory)
-- num_predict=4096: Max output tokens (limits generation memory)
+- num_predict=6144: Max output tokens (limits generation memory)
 - Image resize:     Max 800px (reduces vision encoder memory)
 - Queue max=10:     Bounds total pending work
 ```
@@ -446,8 +494,8 @@ Additional controls:
 4.  Image downloaded from LINE Content API
 5.  Resized to max 800px, min 64px, JPEG encoded
 6.  Lightweight system prompt: "你是圖片分析助手..."
-7.  /no_think directive for direct analysis
-8.  Ollama inference (~2-3s for images)
+7.  think=False via Ollama API parameter (no reasoning overhead)
+8.  Ollama inference (~5-10s for images)
 9.  OpenCC conversion + reply
 ```
 
@@ -487,7 +535,7 @@ curl http://localhost:8000/health | jq
     "rate_limit": {"active_trackers": 5, "max_requests": 30, "window_seconds": 60},
     "drive": {"is_configured": true, "prompt_version": 1, "image_mappings": 3},
     "scheduler": {"running": true, "job_count": 2},
-    "conversation_context": {"groups_tracked": 5, "total_messages": 12, "max_messages_per_group": 3},
+    "conversation_context": {"groups_tracked": 5, "total_messages": 12, "max_messages_per_group": 5},
     "web_search_quota": {"month": "2026-02", "used": 15, "quota": 950, "remaining": 935}
   }
 }

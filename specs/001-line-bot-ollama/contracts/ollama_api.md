@@ -4,7 +4,7 @@
 
 ## Purpose
 
-This contract defines the integration between our LINE Bot and the locally deployed Ollama service running gemma3:4b VLM. It specifies request/response formats, error handling, and performance expectations.
+This contract defines the integration between our LINE Bot and the locally deployed Ollama service running qwen3.5:9b. It specifies request/response formats, error handling, and performance expectations.
 
 ## Service Configuration
 
@@ -15,10 +15,10 @@ This contract defines the integration between our LINE Bot and the locally deplo
 - **Network**: Localhost only (no external exposure)
 
 ### Model
-- **Model Name**: `gemma3:4b`
-- **Type**: Vision-Language Model (VLM)
-- **Context Window**: 8192 tokens (typical for gemma3)
-- **VRAM Usage**: ~4-5GB when loaded
+- **Model Name**: `qwen3.5:9b`
+- **Type**: Language Model (LM)
+- **Context Window**: 8192 tokens
+- **VRAM Usage**: ~5-6GB when loaded
 - **Concurrent Limit**: 1 request at a time (enforced by our queue)
 
 ## API Endpoints
@@ -30,7 +30,7 @@ This contract defines the integration between our LINE Bot and the locally deplo
 **Request**:
 ```json
 {
-  "model": "gemma3:4b",
+  "model": "qwen3.5:9b",
   "prompt": "What is the capital of France?",
   "system": "You are a helpful assistant in a LINE group chat. Respond concisely in Traditional Chinese or English based on the user's language.",
   "stream": false,
@@ -43,7 +43,7 @@ This contract defines the integration between our LINE Bot and the locally deplo
 ```
 
 **Request Schema**:
-- `model` (string, required): Model identifier (`gemma3:4b`)
+- `model` (string, required): Model identifier (`qwen3.5:9b`)
 - `prompt` (string, required): User question text
 - `system` (string, optional): System prompt from Google Drive
 - `stream` (boolean, optional): Enable streaming responses (default: false)
@@ -56,7 +56,7 @@ This contract defines the integration between our LINE Bot and the locally deplo
 **Response** (Success):
 ```json
 {
-  "model": "gemma3:4b",
+  "model": "qwen3.5:9b",
   "created_at": "2026-01-07T12:34:56.789012345Z",
   "response": "Paris is the capital of France.",
   "done": true,
@@ -97,7 +97,7 @@ This contract defines the integration between our LINE Bot and the locally deplo
 **Request**:
 ```json
 {
-  "model": "gemma3:4b",
+  "model": "qwen3.5:9b",
   "prompt": "What's in this image? Describe it in detail.",
   "system": "You are a helpful assistant analyzing images in a LINE group chat. Respond concisely.",
   "images": ["iVBORw0KGgoAAAANSUhEUgAAAAUA..."],
@@ -118,7 +118,7 @@ This contract defines the integration between our LINE Bot and the locally deplo
 **Response**: Same schema as text-only, but with image processing metrics:
 ```json
 {
-  "model": "gemma3:4b",
+  "model": "qwen3.5:9b",
   "created_at": "2026-01-07T12:35:00.123456789Z",
   "response": "The image shows a cat sitting on a windowsill. The cat appears to be orange and white, looking outside. There's natural daylight coming through the window.",
   "done": true,
@@ -149,14 +149,14 @@ This contract defines the integration between our LINE Bot and the locally deplo
 {
   "models": [
     {
-      "name": "gemma3:4b",
+      "name": "qwen3.5:9b",
       "modified_at": "2026-01-05T10:00:00.123456789Z",
-      "size": 4200000000,
+      "size": 5200000000,
       "digest": "sha256:1234567890abcdef...",
       "details": {
         "format": "gguf",
-        "family": "gemma",
-        "parameter_size": "4B",
+        "family": "qwen2",
+        "parameter_size": "9B",
         "quantization_level": "Q4_K_M"
       }
     }
@@ -164,7 +164,7 @@ This contract defines the integration between our LINE Bot and the locally deplo
 }
 ```
 
-**Use Case**: Verify `gemma3:4b` model is available before processing requests
+**Use Case**: Verify `qwen3.5:9b` model is available before processing requests
 
 ---
 
@@ -175,7 +175,7 @@ This contract defines the integration between our LINE Bot and the locally deplo
 All error responses follow this schema:
 ```json
 {
-  "error": "model 'gemma3:4b' not found"
+  "error": "model 'qwen3.5:9b' not found"
 }
 ```
 
@@ -186,11 +186,11 @@ All error responses follow this schema:
 **Response**:
 ```json
 {
-  "error": "model 'gemma3:4b' not found"
+  "error": "model 'qwen3.5:9b' not found"
 }
 ```
 **Bot Action**:
-- Send error message to admin contacts: "Ollama model not found - please run `ollama pull gemma3:4b`"
+- Send error message to admin contacts: "Ollama model not found - please run `ollama pull qwen3.5:9b`"
 - Reply to user: "⚠️ 系統維護中，請稍後再試 (System maintenance, please try later)"
 - FR-043, FR-044, FR-046
 
@@ -256,7 +256,7 @@ import asyncio
 async def generate_text_response(prompt: str, system_prompt: str) -> str:
     """Send text-only request to Ollama API"""
     payload = {
-        "model": "gemma3:4b",
+        "model": "qwen3.5:9b",
         "prompt": prompt,
         "system": system_prompt,
         "stream": False,
@@ -290,7 +290,7 @@ async def generate_multimodal_response(
 ) -> str:
     """Send text + image request to Ollama API"""
     payload = {
-        "model": "gemma3:4b",
+        "model": "qwen3.5:9b",
         "prompt": prompt,
         "system": system_prompt,
         "images": [image_base64],  # Single image as array
@@ -330,7 +330,7 @@ async def check_ollama_health() -> bool:
 
                 data = await resp.json()
                 models = data.get('models', [])
-                return any(m['name'] == 'gemma3:4b' for m in models)
+                return any(m['name'] == 'qwen3.5:9b' for m in models)
     except (aiohttp.ClientError, asyncio.TimeoutError):
         return False
 ```

@@ -7,7 +7,7 @@ without writing to disk for privacy compliance.
 
 from io import BytesIO
 import base64
-from typing import Optional, Tuple
+from typing import Optional
 from PIL import Image
 try:
     import pillow_heif
@@ -26,7 +26,7 @@ logger = get_logger("services.image")
 # VLM doesn't need high-res; 800px saves ~1000 prompt tokens vs 1920px
 MAX_IMAGE_DIMENSION = 800
 
-# Minimum dimension required by qwen3-vl (SmartResize needs >= 32px per side)
+# Minimum dimension required by the model (needs >= 32px per side to avoid issues)
 MIN_IMAGE_DIMENSION = 64
 
 # Supported image formats
@@ -126,7 +126,7 @@ def process_image_bytes(
             if img.format not in SUPPORTED_FORMATS:
                 logger.warning(f"Converting {img.format} to JPEG")
             
-            # Ensure minimum dimensions for VLM (qwen3-vl needs >= 32px)
+            # Ensure minimum dimensions for the model (needs >= 32px to avoid issues)
             width, height = img.size
             if width < MIN_IMAGE_DIMENSION or height < MIN_IMAGE_DIMENSION:
                 scale = max(MIN_IMAGE_DIMENSION / width, MIN_IMAGE_DIMENSION / height)
@@ -202,37 +202,6 @@ def resize_image(img: Image.Image, max_dimension: int) -> Image.Image:
     logger.debug(f"Image resized: {width}x{height} -> {new_width}x{new_height}")
     
     return resized
-
-
-def get_image_dimensions(image_bytes: BytesIO) -> Tuple[int, int]:
-    """
-    Get image dimensions without fully loading.
-    
-    Args:
-        image_bytes: BytesIO containing image data
-        
-    Returns:
-        Tuple of (width, height)
-    """
-    image_bytes.seek(0)
-    with Image.open(image_bytes) as img:
-        return img.size
-
-
-def estimate_base64_size(image_bytes: BytesIO) -> int:
-    """
-    Estimate base64 encoded size.
-    
-    Args:
-        image_bytes: BytesIO containing image data
-        
-    Returns:
-        Estimated base64 string length
-    """
-    image_bytes.seek(0)
-    raw_size = len(image_bytes.read())
-    # Base64 encoding increases size by ~33%
-    return int(raw_size * 1.37)
 
 
 def convert_to_jpeg(

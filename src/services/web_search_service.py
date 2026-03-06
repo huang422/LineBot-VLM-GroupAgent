@@ -8,6 +8,7 @@ Tavily is optimized for LLMs and RAG applications.
 API Documentation: https://docs.tavily.com/
 """
 
+import asyncio
 from typing import Optional, List
 from dataclasses import dataclass
 from datetime import datetime, timezone
@@ -253,8 +254,7 @@ class WebSearchService:
             client = self._get_client()
 
             # Run search synchronously (Tavily client is sync)
-            import asyncio
-            loop = asyncio.get_event_loop()
+            loop = asyncio.get_running_loop()
             response = await loop.run_in_executor(
                 None,
                 lambda: client.search(
@@ -333,8 +333,7 @@ class WebSearchService:
 
             client = self._get_client()
 
-            import asyncio
-            loop = asyncio.get_event_loop()
+            loop = asyncio.get_running_loop()
             response = await loop.run_in_executor(
                 None,
                 lambda: client.extract(urls=urls)

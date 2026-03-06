@@ -126,6 +126,89 @@ class SchedulerService:
             logger.error(f"Failed to add scheduled job: {e}", exc_info=True)
             return False
 
+    def add_yearly_message(
+        self,
+        job_id: str,
+        month: int,
+        day: int,
+        hour: int,
+        minute: int,
+        group_id: str,
+        message: str,
+    ) -> bool:
+        """
+        Add a yearly scheduled message.
+
+        Args:
+            job_id: Unique identifier for this job
+            month: Month of the year (1-12)
+            day: Day of the month (1-31)
+            hour: Hour (0-23)
+            minute: Minute (0-59)
+            group_id: LINE group ID to send message to
+            message: Message text to send
+
+        Returns:
+            True if job was added successfully
+        """
+        try:
+            from src.services.line_service import get_line_service
+
+            async def send_scheduled_message():
+                """Async task to send the scheduled message."""
+                line_service = get_line_service()
+                logger.info(
+                    f"Sending scheduled message",
+                    extra={
+                        "job_id": job_id,
+                        "group_id": group_id[:8],
+                        "message_text": message[:30],
+                    }
+                )
+
+                success = await line_service.push_text(
+                    to=group_id,
+                    text=message,
+                    notification_disabled=False,
+                )
+
+                if success:
+                    logger.info(f"Scheduled message sent successfully: {job_id}")
+                else:
+                    logger.error(f"Failed to send scheduled message: {job_id}")
+
+            # Create cron trigger for yearly schedule
+            trigger = CronTrigger(
+                month=month,
+                day=day,
+                hour=hour,
+                minute=minute,
+                timezone="Asia/Taipei",  # Taiwan timezone
+            )
+
+            # Add job to scheduler
+            self.scheduler.add_job(
+                send_scheduled_message,
+                trigger=trigger,
+                id=job_id,
+                name=f"Yearly message: {message[:20]}",
+                replace_existing=True,
+            )
+
+            logger.info(
+                f"Added yearly job",
+                extra={
+                    "job_id": job_id,
+                    "schedule": f"{month:02d}-{day:02d} {hour:02d}:{minute:02d}",
+                    "group_id": group_id[:8],
+                }
+            )
+            return True
+
+        except Exception as e:
+            logger.error(f"Failed to add scheduled job: {e}", exc_info=True)
+            return False
+
     def remove_job(self, job_id: str) -> bool:
         """
         Remove a scheduled job.

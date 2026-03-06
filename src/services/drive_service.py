@@ -256,7 +256,7 @@ class DriveService:
             service = self._get_service()
 
             # Export as plain text
-            loop = asyncio.get_event_loop()
+            loop = asyncio.get_running_loop()
             content = await loop.run_in_executor(
                 None,
                 lambda: service.files().export(
@@ -389,7 +389,7 @@ class DriveService:
                 return None
 
             # Read the first sheet (A1:C1000)
-            loop = asyncio.get_event_loop()
+            loop = asyncio.get_running_loop()
             result = await loop.run_in_executor(
                 None,
                 lambda: self._sheets_service.spreadsheets().values().get(
@@ -491,7 +491,7 @@ class DriveService:
             query = f"name='{filename}' and '{self.folder_id}' in parents and trashed=false"
             
             # Run blocking API call in thread pool
-            loop = asyncio.get_event_loop()
+            loop = asyncio.get_running_loop()
             results = await loop.run_in_executor(
                 None,
                 lambda: service.files().list(
@@ -521,7 +521,7 @@ class DriveService:
         try:
             service = self._get_service()
             
-            loop = asyncio.get_event_loop()
+            loop = asyncio.get_running_loop()
             content = await loop.run_in_executor(
                 None,
                 lambda: service.files().get_media(fileId=file_id).execute()
@@ -553,7 +553,7 @@ class DriveService:
         try:
             service = self._get_service()
             
-            loop = asyncio.get_event_loop()
+            loop = asyncio.get_running_loop()
             content = await loop.run_in_executor(
                 None,
                 lambda: service.files().get_media(fileId=file_id).execute()
