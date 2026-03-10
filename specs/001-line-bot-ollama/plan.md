@@ -4,7 +4,7 @@
 
 ## Summary
 
-Build a headless LINE group chatbot backend with keyword-triggered responses (`!hej`, `!img`, `!reload`) that integrates with locally-deployed Ollama qwen3.5:9b on RTX 4080 GPU. The system uses Google Drive for collaborative prompt/image management with 30-60 second auto-sync polling, processes requests through an async queue (max 10, concurrency=1) to prevent GPU overload, and streams images directly to the LLM in-memory without local storage for privacy protection. Runs as a constantly-running FastAPI service, deployed via Cloudflare Tunnel for public webhook access, with no frontend interface required - all operations controlled via LINE messages.
+Build a headless LINE group chatbot backend with keyword-triggered responses (`!hej`, `!img`, `!reload`) that integrates with locally-deployed Ollama qwen3.5:35b-a3b on RTX 4080 GPU. The system uses Google Drive for collaborative prompt/image management with 30-60 second auto-sync polling, processes requests through an async queue (max 10, concurrency=1) to prevent GPU overload, and streams images directly to the LLM in-memory without local storage for privacy protection. Runs as a constantly-running FastAPI service, deployed via Cloudflare Tunnel for public webhook access, with no frontend interface required - all operations controlled via LINE messages.
 
 ## Technical Context
 
@@ -109,7 +109,7 @@ Note: No frontend, no static file server, no web UI - purely webhook-driven back
 
 ### 1. Sequential LLM Processing
 **Decision**: Use asyncio.Semaphore(1) to enforce single concurrent LLM request
-**Rationale**: RTX 4080 12GB VRAM prevents concurrent qwen3.5:9b inference
+**Rationale**: RTX 4080 12GB VRAM prevents concurrent inference regardless of model (qwen3.5:35b-a3b or qwen3.5:9b)
 **Trade-off**: Higher latency under load vs GPU stability
 
 ### 2. In-Memory Image Processing

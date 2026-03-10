@@ -4,7 +4,7 @@
 
 ## Purpose
 
-This contract defines the integration between our LINE Bot and the locally deployed Ollama service running qwen3.5:9b. It specifies request/response formats, error handling, and performance expectations.
+This contract defines the integration between our LINE Bot and the locally deployed Ollama service running a configurable model (qwen3.5:35b-a3b for quality or qwen3.5:9b for speed, set via OLLAMA_MODEL in .env). It specifies request/response formats, error handling, and performance expectations.
 
 ## Service Configuration
 
@@ -15,10 +15,12 @@ This contract defines the integration between our LINE Bot and the locally deplo
 - **Network**: Localhost only (no external exposure)
 
 ### Model
-- **Model Name**: `qwen3.5:9b`
+- **Model Name**: Configurable via `OLLAMA_MODEL` in `.env`
+  - `qwen3.5:35b-a3b` — high quality, slower (~20GB, GPU/RAM split)
+  - `qwen3.5:9b`       — fast, lightweight (~5GB, fits in 12GB VRAM)
 - **Type**: Language Model (LM)
 - **Context Window**: 8192 tokens
-- **VRAM Usage**: ~5-6GB when loaded
+- **VRAM Usage**: ~10GB (35b-a3b with split) or ~5GB (9b, full GPU)
 - **Concurrent Limit**: 1 request at a time (enforced by our queue)
 
 ## API Endpoints
@@ -30,7 +32,7 @@ This contract defines the integration between our LINE Bot and the locally deplo
 **Request**:
 ```json
 {
-  "model": "qwen3.5:9b",
+  "model": "qwen3.5:35b-a3b",
   "prompt": "What is the capital of France?",
   "system": "You are a helpful assistant in a LINE group chat. Respond concisely in Traditional Chinese or English based on the user's language.",
   "stream": false,
@@ -43,7 +45,7 @@ This contract defines the integration between our LINE Bot and the locally deplo
 ```
 
 **Request Schema**:
-- `model` (string, required): Model identifier (`qwen3.5:9b`)
+- `model` (string, required): Model identifier (value of `OLLAMA_MODEL`, e.g. `qwen3.5:35b-a3b` or `qwen3.5:9b`)
 - `prompt` (string, required): User question text
 - `system` (string, optional): System prompt from Google Drive
 - `stream` (boolean, optional): Enable streaming responses (default: false)
@@ -56,7 +58,7 @@ This contract defines the integration between our LINE Bot and the locally deplo
 **Response** (Success):
 ```json
 {
-  "model": "qwen3.5:9b",
+  "model": "qwen3.5:35b-a3b",
   "created_at": "2026-01-07T12:34:56.789012345Z",
   "response": "Paris is the capital of France.",
   "done": true,
@@ -97,7 +99,7 @@ This contract defines the integration between our LINE Bot and the locally deplo
 **Request**:
 ```json
 {
-  "model": "qwen3.5:9b",
+  "model": "qwen3.5:35b-a3b",
   "prompt": "What's in this image? Describe it in detail.",
   "system": "You are a helpful assistant analyzing images in a LINE group chat. Respond concisely.",
   "images": ["iVBORw0KGgoAAAANSUhEUgAAAAUA..."],
@@ -118,7 +120,7 @@ This contract defines the integration between our LINE Bot and the locally deplo
 **Response**: Same schema as text-only, but with image processing metrics:
 ```json
 {
-  "model": "qwen3.5:9b",
+  "model": "qwen3.5:35b-a3b",
   "created_at": "2026-01-07T12:35:00.123456789Z",
   "response": "The image shows a cat sitting on a windowsill. The cat appears to be orange and white, looking outside. There's natural daylight coming through the window.",
   "done": true,
@@ -149,7 +151,7 @@ This contract defines the integration between our LINE Bot and the locally deplo
 {
   "models": [
     {
-      "name": "qwen3.5:9b",
+      "name": "qwen3.5:35b-a3b",
       "modified_at": "2026-01-05T10:00:00.123456789Z",
       "size": 5200000000,
       "digest": "sha256:1234567890abcdef...",
@@ -164,7 +166,7 @@ This contract defines the integration between our LINE Bot and the locally deplo
 }
 ```
 
-**Use Case**: Verify `qwen3.5:9b` model is available before processing requests
+**Use Case**: Verify configured model (`qwen3.5:35b-a3b` or `qwen3.5:9b`) is available before processing requests
 
 ---
 
@@ -175,7 +177,7 @@ This contract defines the integration between our LINE Bot and the locally deplo
 All error responses follow this schema:
 ```json
 {
-  "error": "model 'qwen3.5:9b' not found"
+  "error": "model 'qwen3.5:35b-a3b' not found"
 }
 ```
 
@@ -186,11 +188,11 @@ All error responses follow this schema:
 **Response**:
 ```json
 {
-  "error": "model 'qwen3.5:9b' not found"
+  "error": "model 'qwen3.5:35b-a3b' not found"
 }
 ```
 **Bot Action**:
-- Send error message to admin contacts: "Ollama model not found - please run `ollama pull qwen3.5:9b`"
+- Send error message to admin contacts: "Ollama model not found - please run `ollama pull qwen3.5:35b-a3b` (or `ollama pull qwen3.5:9b` if using the lightweight model)"
 - Reply to user: "⚠️ 系統維護中，請稍後再試 (System maintenance, please try later)"
 - FR-043, FR-044, FR-046
 
@@ -256,7 +258,7 @@ import asyncio
 async def generate_text_response(prompt: str, system_prompt: str) -> str:
     """Send text-only request to Ollama API"""
     payload = {
-        "model": "qwen3.5:9b",
+        "model": "qwen3.5:35b-a3b",
         "prompt": prompt,
         "system": system_prompt,
         "stream": False,
@@ -290,7 +292,7 @@ async def generate_multimodal_response(
 ) -> str:
     """Send text + image request to Ollama API"""
     payload = {
-        "model": "qwen3.5:9b",
+        "model": "qwen3.5:35b-a3b",
         "prompt": prompt,
         "system": system_prompt,
         "images": [image_base64],  # Single image as array
@@ -330,7 +332,7 @@ async def check_ollama_health() -> bool:
 
                 data = await resp.json()
                 models = data.get('models', [])
-                return any(m['name'] == 'qwen3.5:9b' for m in models)
+                return any(m['name'] == 'qwen3.5:35b-a3b' for m in models)
     except (aiohttp.ClientError, asyncio.TimeoutError):
         return False
 ```

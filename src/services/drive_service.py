@@ -7,6 +7,7 @@ automatic polling for changes to prompts and image mappings.
 
 import asyncio
 import hashlib
+import httplib2
 from pathlib import Path
 from typing import Optional, Dict, Tuple
 from datetime import datetime
@@ -124,9 +125,10 @@ class DriveService:
             raise DriveError("Google Drive is not configured")
         
         try:
+            import google_auth_httplib2
             from google.oauth2 import service_account
             from googleapiclient.discovery import build
-            
+
             self._credentials = service_account.Credentials.from_service_account_file(
                 self.service_account_file,
                 scopes=[
@@ -135,9 +137,17 @@ class DriveService:
                 ]
             )
 
-            self._service = build('drive', 'v3', credentials=self._credentials)
-            # Also create Sheets service for reading spreadsheets
-            self._sheets_service = build('sheets', 'v4', credentials=self._credentials)
+            # Use explicit HTTP timeout to prevent "read operation timed out" errors.
+            # Default httplib2 timeout inherits OS socket default which can be too short.
+            _http = google_auth_httplib2.AuthorizedHttp(
+                self._credentials, http=httplib2.Http(timeout=60)
+            )
+            self._service = build('drive', 'v3', http=_http)
+            # Sheets service with same timeout
+            _http_sheets = google_auth_httplib2.AuthorizedHttp(
+                self._credentials, http=httplib2.Http(timeout=60)
+            )
+            self._sheets_service = build('sheets', 'v4', http=_http_sheets)
             logger.info("Google Drive and Sheets API services created")
             return self._service
             

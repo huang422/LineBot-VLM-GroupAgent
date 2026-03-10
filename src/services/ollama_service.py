@@ -58,11 +58,11 @@ class OllamaService:
     Service for interacting with Ollama API.
     
     Supports both text-only and multimodal (image + text) requests
-    using the qwen3.5:9b model.
+    using the configured Ollama model (set OLLAMA_MODEL in .env).
 
     Attributes:
         base_url: Ollama API base URL (e.g., http://localhost:11434)
-        model: Model name (e.g., qwen3.5:9b)
+        model: Model name (e.g., qwen3.5:35b-a3b for quality or qwen3.5:9b for speed)
         client: Async HTTP client for API calls
     """
     
@@ -117,7 +117,7 @@ class OllamaService:
         try:
             response = await self.client.get(
                 f"{self.base_url}/api/tags",
-                timeout=5.0
+                timeout=10.0
             )
             return response.status_code == 200
         except Exception as e:
@@ -138,8 +138,8 @@ class OllamaService:
         Generate a response from the LLM using streaming with smart think routing.
 
         Automatically decides between /think and /no_think modes:
-        - /no_think (default, ~80% of queries): Fast, 5-15s, fits within reply_token
-        - /think (complex queries only): Slower but deeper reasoning, 20-60s+
+        - /no_think (default, ~80% of queries): Fast, 30-60s with 35b model
+        - /think (complex queries only): Slower but deeper reasoning, 60-200s+
 
         The think content is always filtered from the output regardless of mode.
 
@@ -187,8 +187,8 @@ class OllamaService:
             logger.debug("Multimodal request with image (thinking disabled)")
         else:
             # Text-only: auto-select think mode via Ollama API "think" parameter.
-            # Complex keywords → think=True (full budget, 180s timeout then retry).
-            # Everything else → think=False (fast, fits 30s reply_token window).
+            # Complex keywords → think=True (full budget, 200s timeout then retry).
+            # Everything else → think=False (faster, but still 30-60s with 35b model).
             is_complex = any(kw in prompt for kw in _COMPLEX_QUERY_TRIGGERS)
             if is_complex:
                 enable_think = True
@@ -219,10 +219,11 @@ class OllamaService:
         try:
             start_time = time.monotonic()
 
-            # Text requests: 180s timeout (leaves ~50s for retry before queue's 240s deadline).
+            # Text requests: 300s think timeout, then retry with think=False (90s).
+            # Full pipeline budget: classify(≤30s) + search(≤20s) + think(300s) + sleep(2s) + retry(90s) = 442s < 480s queue limit.
             # Image requests: rely on httpx-level timeout (300s), no retry needed.
-            _THINKING_TIMEOUT = 180.0
-            _RETRY_TIMEOUT = 50.0  # Max time for think=False retry (180+2+50=232 < 240s queue limit)
+            _THINKING_TIMEOUT = 300.0
+            _RETRY_TIMEOUT = 90.0  # Max time for think=False retry (300+2+90=392, plus upstream steps ≤ 480s queue limit)
             timed_out = False
 
             if not is_multimodal:
@@ -278,7 +279,7 @@ class OllamaService:
                     "think": False,  # Ollama API param — force no thinking on retry
                     "system": f"{time_prefix}{system_prompt}" if system_prompt else time_prefix,
                     "options": {
-                        "num_predict": 6144,
+                        "num_predict": 4096,  # Retry: enough budget for a full answer, capped by _RETRY_TIMEOUT
                         "temperature": 0.7,
                         "num_ctx": settings.ollama_num_ctx,
                     }
@@ -480,7 +481,7 @@ class OllamaService:
             response = await self.client.post(
                 f"{self.base_url}/api/generate",
                 json=payload,
-                timeout=httpx.Timeout(connect=CONNECT_TIMEOUT, read=15.0, write=10.0, pool=5.0),
+                timeout=httpx.Timeout(connect=CONNECT_TIMEOUT, read=30.0, write=10.0, pool=5.0),
             )
 
             if response.status_code == 200:

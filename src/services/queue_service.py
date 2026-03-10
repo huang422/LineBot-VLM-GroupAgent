@@ -364,9 +364,9 @@ class QueueService:
         """
         Estimate wait time in seconds for new request.
         
-        Based on average processing time assumption of 15 seconds.
+        Based on average processing time assumption of 80 seconds for 35b model.
         """
-        avg_processing_time = 15  # seconds per request (estimate)
+        avg_processing_time = 80  # seconds per request (35b model with GPU/RAM split estimate)
         return self.current_size * avg_processing_time
 
 

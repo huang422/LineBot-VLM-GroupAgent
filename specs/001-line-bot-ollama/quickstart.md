@@ -49,23 +49,29 @@ curl -fsSL https://ollama.com/install.sh | sh
 ollama --version
 ```
 
-### 1.2 Download qwen3.5:9b Model
+### 1.2 Download Model
+
+Choose one based on your hardware (set `OLLAMA_MODEL` in `.env` accordingly):
 
 ```bash
-# Pull the model (this will take several minutes)
-ollama pull qwen3.5:9b
+# High quality (slow)  — qwen3.5:35b-a3b: ~20GB, requires GPU/RAM split, needs 32GB system RAM
+ollama pull qwen3.5:35b-a3b
+
+# Fast (lightweight)   — qwen3.5:9b: ~5GB, fits fully in 12GB VRAM
+# ollama pull qwen3.5:9b
 
 # Verify model is available
 ollama list
 
 # Test model
-ollama run qwen3.5:9b "What is 2+2?"
+ollama run qwen3.5:35b-a3b "What is 2+2?"  # or qwen3.5:9b
 ```
 
 **Expected Output**:
 ```
-NAME            ID              SIZE      MODIFIED
-qwen3.5:9b      a1b2c3d4e5f6    5.2 GB    2 minutes ago
+NAME                 ID              SIZE      MODIFIED
+qwen3.5:35b-a3b      a1b2c3d4e5f6    20.0 GB   2 minutes ago
+# or: qwen3.5:9b     b2c3d4e5f6a7    5.2 GB    2 minutes ago
 ```
 
 ### 1.3 Start Ollama Service
@@ -265,7 +271,7 @@ GOOGLE_SERVICE_ACCOUNT_FILE=/home/user/Desktop/Tom/AI-linebot/service_account_ke
 
 # Ollama
 OLLAMA_BASE_URL=http://localhost:11434
-OLLAMA_MODEL=qwen3.5:9b
+OLLAMA_MODEL=qwen3.5:35b-a3b  # or qwen3.5:9b — only this line needs to change when switching models
 OLLAMA_TIMEOUT_TEXT=10
 OLLAMA_TIMEOUT_MULTIMODAL=30
 

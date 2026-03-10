@@ -2,7 +2,7 @@
 
 [![Python](https://img.shields.io/badge/Python-3.11+-blue.svg?logo=python&logoColor=white)](https://www.python.org/)
 [![FastAPI](https://img.shields.io/badge/FastAPI-0.109+-009688.svg?logo=fastapi&logoColor=white)](https://fastapi.tiangolo.com/)
-[![Ollama](https://img.shields.io/badge/Ollama-qwen3.5:9b-000000.svg?logo=ollama&logoColor=white)](https://ollama.ai/)
+[![Ollama](https://img.shields.io/badge/Ollama-qwen3.5:35b-a3b-000000.svg?logo=ollama&logoColor=white)](https://ollama.ai/)
 [![LINE](https://img.shields.io/badge/LINE-Messaging%20API-00C300.svg?logo=line&logoColor=white)](https://developers.line.biz/)
 [![Docker](https://img.shields.io/badge/Docker-Compose-2496ED.svg?logo=docker&logoColor=white)](https://docs.docker.com/compose/)
 [![Google Drive](https://img.shields.io/badge/Google%20Drive-API-4285F4.svg?logo=googledrive&logoColor=white)](https://developers.google.com/drive)
@@ -11,7 +11,7 @@
 [![Cloudflare](https://img.shields.io/badge/Cloudflare-Tunnel-F38020.svg?logo=cloudflare&logoColor=white)](https://www.cloudflare.com/)
 [![Buy Me A Coffee](https://img.shields.io/badge/Buy%20Me%20a%20Coffee-ffdd00?style=for-the-badge&logo=buy-me-a-coffee&logoColor=black)](https://www.buymeacoffee.com/huang422)
 
-A **production-ready LINE group chatbot** powered by local **Ollama reasoning model (qwen3.5:9b)**, enabling AI conversations, image analysis, web search, and webpage content extraction without cloud API dependencies. Features reasoning model support with streaming, automatic simplified→traditional Chinese conversion, time-aware responses, guaranteed reply mechanisms and GPU Async Management.
+A **production-ready LINE group chatbot** powered by local **Ollama reasoning model (qwen3.5:35b-a3b or qwen3.5:9b)**, enabling AI conversations, image analysis, web search, and webpage content extraction without cloud API dependencies. Features reasoning model support with streaming, automatic simplified→traditional Chinese conversion, time-aware responses, guaranteed reply mechanisms and GPU Async Management.
 
 ---
 
@@ -19,13 +19,13 @@ A **production-ready LINE group chatbot** powered by local **Ollama reasoning mo
 
 ### Core Capabilities
 
-- **AI Conversations** - Natural language Q&A powered by local Ollama reasoning model (qwen3.5:9b)
+- **AI Conversations** - Natural language Q&A powered by local Ollama reasoning model (qwen3.5:35b-a3b or qwen3.5:9b)
 - **Vision Analysis** - Reply to images for instant multimodal analysis with optimized lightweight prompts
 - **Auto Web Search** - LLM-driven search classification: automatically determines if a question needs real-time web data, date-aware queries
 - **Manual Web Search** - `!web` command for explicit web search + AI response via Tavily AI (advanced depth, AI summary)
 - **Webpage Extraction** - Automatic URL detection in messages, extracts full webpage content via Tavily Extract API with fallback search
 - **Conversation Context** - Automatic tracking of last 5 messages per group for contextual responses
-- **Smart Think Routing** - Auto-detects complex queries for `think=True` mode; simple queries use `think=False` (fast, fits 30s reply_token window); 180s timeout then guaranteed retry with `think=False`
+- **Smart Think Routing** - Auto-detects complex queries for `think=True` mode; simple queries use `think=False` (fast, fits 30s reply_token window); 300s timeout then guaranteed retry with `think=False`
 - **Traditional Chinese Enforcement** - All output forced to 繁體中文 via OpenCC (simplified→traditional conversion)
 - **Time Awareness** - Current Taiwan date/time injected into every prompt (no extra API calls)
 - **Guaranteed Reply** - Every request gets a response: reply_token (FREE) → push_message (PAID, with elapsed time logged); timeout/error auto-notifies user
@@ -70,7 +70,7 @@ A **production-ready LINE group chatbot** powered by local **Ollama reasoning mo
 | Component | Technology | Purpose |
 |-----------|-----------|---------|
 | **Web Framework** | FastAPI + Uvicorn | Async API server with webhook handling |
-| **LLM Engine** | Ollama (qwen3.5:9b) | Local GPU-accelerated reasoning model |
+| **LLM Engine** | Ollama (qwen3.5:35b-a3b or qwen3.5:9b) | Local GPU-accelerated reasoning model (set via OLLAMA_MODEL) |
 | **Web Search** | Tavily AI | Real-time web search + webpage content extraction |
 | **Auto Search** | LLM Classification | Two-stage (keyword + LLM) search need detection |
 | **URL Extraction** | Tavily Extract API | Automatic webpage content extraction from URLs |
@@ -116,8 +116,9 @@ LINE_CHANNEL_ACCESS_TOKEN=your_token_here
 # Start all services (linebot + ollama + cloudflared)
 docker compose up -d
 
-# Pull the VLM model (first time only, ~5GB)
-docker compose exec ollama ollama pull qwen3.5:9b
+# Pull the model — choose one based on your hardware (set OLLAMA_MODEL in .env accordingly)
+docker compose exec ollama ollama pull qwen3.5:35b-a3b  # high quality (~20GB, needs 32GB RAM)
+# docker compose exec ollama ollama pull qwen3.5:9b     # fast (~5GB, fits in 12GB VRAM)
 
 # Get the public webhook URL
 docker compose logs cloudflared | grep trycloudflare.com
@@ -242,7 +243,7 @@ LINE_CHANNEL_ACCESS_TOKEN=your_token
 
 **Optional - Ollama Model:**
 ```bash
-OLLAMA_MODEL=qwen3.5:9b               # Reasoning model
+OLLAMA_MODEL=qwen3.5:35b-a3b               # or qwen3.5:9b for speed — only this line needs changing
 OLLAMA_BASE_URL=http://localhost:11434 # Ollama API endpoint
 OLLAMA_NUM_PREDICT=6144                # Max tokens (thinking + response)
 OLLAMA_TEMPERATURE=0.7                 # Creativity (0=deterministic)
@@ -254,7 +255,7 @@ OLLAMA_NUM_CTX=8192                    # Context window (8192 for image support)
 RATE_LIMIT_MAX_REQUESTS=30          # Per-user quota per window
 RATE_LIMIT_WINDOW_SECONDS=60        # Window duration
 QUEUE_MAX_SIZE=10                   # Max pending requests
-QUEUE_TIMEOUT_SECONDS=240           # Request timeout (180s think + 2s sleep + 50s retry)
+QUEUE_TIMEOUT_SECONDS=480           # Full pipeline: classify(30) + search(20) + think(300) + sleep(2) + retry(90)
 ```
 
 **Optional - Google Drive:**
@@ -321,7 +322,7 @@ src/
 
 **Think / No-Think Routing:**
 ```
-Ollama qwen3.5:9b streaming API returns two separate fields:
+Ollama qwen3.5:35b-a3b (or qwen3.5:9b) streaming API returns two separate fields:
   - "thinking" : internal reasoning (always hidden from user)
   - "response" : final answer (sent to user)
 
@@ -341,10 +342,10 @@ Controlled via Ollama API parameter "think": true/false (NOT text prefix).
   Tokens  : num_predict=6144 (shared by thinking + response)
             ⚠ thinking tokens are consumed FIRST; if thinking uses 3800
                tokens, only 296 remain for the actual response
-  Speed   : 20–180s depending on complexity
+  Speed   : 20–300s depending on complexity
   Reply   : likely >30s → reply_token expired → push_message (PAID)
-  Fallback: if response empty (token exhaustion) OR timeout at 180s
-            → sleep 2s → retry with think=False, num_predict=1024 (≤50s)
+  Fallback: if response empty (token exhaustion) OR timeout at 300s
+            → sleep 2s → retry with think=False, num_predict=1024 (≤90s)
 
   Image analysis (separate path)
   ──────────────────────────────────────────────
@@ -368,21 +369,21 @@ T>30s   LLM done → reply_token expired
          → push_message fallback               [PAID]
          log: [PAID] push_message | elapsed=Xs
 
-─────────────── 180s: thinking timeout ───────────────
+─────────────── 300s: thinking timeout ───────────────
 
-T=180s  think=True timed out → cancel inference
+T=300s  think=True timed out → cancel inference
          → sleep 2s (let Ollama release connection)
-         → retry: think=False, num_predict=1024 (timeout: 50s)
-         → done at ~T+193s → push_message       [PAID]
+         → retry: think=False, num_predict=1024 (timeout: 90s)
+         → done at ~T+392s → push_message       [PAID]
          log: Retry with think=False succeeded
 
-T<180s  think=True token exhaustion (6144 tokens fully consumed by thinking)
+T<300s  think=True token exhaustion (6144 tokens fully consumed by thinking)
          → empty response → immediate retry: think=False, num_predict=1024
          log: Empty response (token_exhaustion), retrying
 
-─────────────── 240s: queue hard timeout ───────────────
+─────────────── 480s: queue hard timeout ───────────────
 
-T=240s  Queue worker timeout → notify user      [FREE or PAID]
+T=480s  Queue worker timeout → notify user      [FREE or PAID]
          "⚠️ 處理時間過長，請稍後再試。"
 
 Exception → notify user                         [FREE or PAID]
@@ -437,7 +438,7 @@ Solution: Single-worker async queue with semaphore-based concurrency control.
 - asyncio.Semaphore(1): guarantees single concurrent GPU inference
 - Non-blocking enqueue: webhook returns 200 immediately
 - Background worker: continuously polls queue, processes sequentially
-- Timeout: 240s per request (queue hard deadline), auto-notifies user on expiration
+- Timeout: 480s per request (queue hard deadline), auto-notifies user on expiration
 - Retry: 1 automatic retry on transient failure (if queue not full)
 ```
 
@@ -445,16 +446,21 @@ Solution: Single-worker async queue with semaphore-based concurrency control.
 ```
 GPU: NVIDIA RTX 4080 (16GB VRAM)
 
-OLLAMA_MAX_VRAM=9663676416 (9GB limit)
+OLLAMA_MAX_VRAM=10737418240 (10GB limit)
 
-Without limit:  Ollama uses ALL 16GB → no room for other processes
-With 9GB limit: ~7GB model weights + ~2GB KV cache
-                Remaining ~7GB available for system/other tasks
+Without limit:  Ollama uses ALL 12GB → OOM with 35b model
+With 10GB limit: ~10GB model weights on GPU, remaining ~10GB offloaded to RAM
+                 ~2GB VRAM reserved for OS/CUDA overhead
 
-Model memory breakdown (qwen3.5:9b):
-- Model weights:  ~5-6GB (Q4 quantized 8B parameters)
-- KV cache:       ~1-2GB (bounded by num_ctx=8192)
-- CUDA overhead:  ~0.5GB
+Model memory breakdown:
+  qwen3.5:35b-a3b Q4_K_M (~20GB total):
+    - GPU (VRAM):   ~10GB model layers (capped by OLLAMA_MAX_VRAM)
+    - RAM offload:  ~10GB remaining layers (needs 32GB+ system RAM)
+    - KV cache:     ~1-2GB  |  CUDA overhead: ~0.5GB
+  qwen3.5:9b Q4_K_M (~5GB total):
+    - GPU (VRAM):   ~5GB (fits fully in 12GB VRAM, no RAM offload needed)
+    - KV cache:     ~1-2GB  |  CUDA overhead: ~0.5GB
+  → Switch model: change OLLAMA_MODEL in .env, no other config change needed
 
 Additional controls:
 - num_ctx=8192:     Context window cap (limits KV cache memory)
@@ -473,7 +479,7 @@ Additional controls:
 5.  Rate limit check
 6.  Image keyword check (auto-delegates to !img if match)
 7.  LLM request enqueued with context
-8.  Queue worker processes (180s timeout)
+8.  Queue worker processes (300s think timeout, 480s hard deadline)
 9.  Loading animation sent (FREE)
 10. URL detection in prompt + quoted message context
 11. URL found → Tavily Extract (fallback: search by URL)

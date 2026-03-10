@@ -3,7 +3,7 @@
 **Feature Branch**: `001-line-bot-ollama`
 **Created**: 2026-01-07
 **Status**: Draft
-**Input**: User description: "LINE Bot system with keyword-triggered responses, local Ollama qwen3.5:9b integration, Google Drive collaborative prompt/asset management, reply-based multimodal interactions, and async queue for GPU resource management"
+**Input**: User description: "LINE Bot system with keyword-triggered responses, local Ollama qwen3.5:35b-a3b (or qwen3.5:9b) integration, Google Drive collaborative prompt/asset management, reply-based multimodal interactions, and async queue for GPU resource management"
 
 ## Clarifications
 
@@ -116,7 +116,7 @@ Users can request predefined images (like architecture diagrams, guides, or meme
 - **FR-005**: System MUST support manual `!reload` command to force immediate refresh of prompts and configuration from Google Drive (supplementing automatic sync)
 
 #### LLM Integration
-- **FR-006**: System MUST integrate with locally deployed Ollama service running qwen3.5:9b model
+- **FR-006**: System MUST integrate with locally deployed Ollama service running configurable model (qwen3.5:35b-a3b or qwen3.5:9b, set via OLLAMA_MODEL)
 - **FR-007**: System MUST send text prompts to Ollama API in the correct payload format
 - **FR-008**: System MUST resize images to maximum 1920px on longest side (preserving aspect ratio) in-memory without saving to disk
 - **FR-009**: System MUST stream images directly to Ollama API without local file storage for privacy protection
@@ -216,7 +216,7 @@ Users can request predefined images (like architecture diagrams, guides, or meme
   - Ollama service running locally on the same machine as the bot server
 
 - **Hardware**:
-  - NVIDIA RTX 4080 GPU with 12GB VRAM for running qwen3.5:9b
+  - NVIDIA RTX 4080 GPU with 12GB VRAM for running qwen3.5:35b-a3b (GPU/RAM split) or qwen3.5:9b (full GPU)
   - Sufficient disk space for caching Google Drive assets locally
 
 - **Network**:
@@ -225,7 +225,7 @@ Users can request predefined images (like architecture diagrams, guides, or meme
 
 ### Assumptions
 
-- The Ollama service is already installed and the qwen3.5:9b model is already downloaded
+- The Ollama service is already installed and the configured model (qwen3.5:35b-a3b or qwen3.5:9b) is already downloaded
 - The bot server has a publicly accessible URL for LINE webhook callbacks (via tunneling service or proper hosting)
 - Google Drive folder structure exists with correct permissions set before first run
 - LINE Bot account and channel are already created with Messaging API enabled
@@ -233,7 +233,7 @@ Users can request predefined images (like architecture diagrams, guides, or meme
 - The bot operates in a trusted environment (private LINE groups) and users are not adversarial
 - Network latency to Google Drive and LINE APIs is reasonable (< 500ms)
 - System administrators can manually restart services if critical failures occur
-- The qwen3.5:9b model's context window is sufficient for expected use cases (typically 8K-32K tokens)
+- The configured model's (qwen3.5:35b-a3b or qwen3.5:9b) context window is sufficient for expected use cases (typically 8K-32K tokens)
 - Image assets in Google Drive are in formats supported by both LINE and the VLM (PNG, JPEG)
 - The Python asyncio event loop can handle webhook concurrency without additional process/thread management
 
@@ -257,7 +257,7 @@ Users can request predefined images (like architecture diagrams, guides, or meme
 - **Latency**: Google Drive API rate limits may introduce delays during `!reload` or `!img` operations
 - **Privacy**: All LLM inference happens locally, no data sent to external AI services. Downloaded images must never be persisted to disk
 - **Deployment**: Bot must be accessible via public URL for LINE webhooks (requires Cloudflare Tunnel or similar tunneling solution)
-- **Model Limitations**: qwen3.5:9b capabilities and context window size constrain response quality and length
+- **Model Limitations**: Configured model (qwen3.5:35b-a3b or qwen3.5:9b) capabilities and context window size constrain response quality and length
 - **LINE API Limits**: Message sending rate limits and file size restrictions apply
 - **Performance Priority**: All implementation decisions must prioritize efficiency, speed, and minimal memory usage
 

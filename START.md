@@ -1,10 +1,10 @@
 # LINE Bot with Ollama - 完整使用指南
 
-> 🤖 本地部署的 LINE 聊天機器人，整合 Ollama VLM（視覺語言模型）
+>  本地部署的 LINE 聊天機器人，整合 Ollama VLM（視覺語言模型）
 
 ---
 
-## 📋 目錄
+## 目錄
 
 1. [快速啟動](#快速啟動)
 2. [獲取 Webhook URL](#獲取-webhook-url)
@@ -17,7 +17,7 @@
 
 ---
 
-## 🚀 快速啟動
+## 快速啟動
 ### 手動啟動
 
 ```bash
@@ -42,9 +42,9 @@ docker compose logs linebot | grep -o '"groupId": "[^"]*"' | sort -u
 ```
 
 應該看到三個服務都在運行：
-- ✅ `ollama` - AI 模型服務（使用 GPU）
-- ✅ `linebot` - LINE Bot 主服務
-- ✅ `cloudflared` - Cloudflare Tunnel
+- `ollama` - AI 模型服務（使用 GPU）
+- `linebot` - LINE Bot 主服務
+- `cloudflared` - Cloudflare Tunnel
 
 ### 首次使用：下載 AI 模型
 
@@ -52,8 +52,9 @@ docker compose logs linebot | grep -o '"groupId": "[^"]*"' | sort -u
 # 檢查模型是否已下載
 docker compose exec ollama ollama list
 
-# 如果沒有 qwen3.5:9b，執行下載（約 5GB，需要幾分鐘）
-docker compose exec ollama ollama pull qwen3.5:9b
+# 下載模型（根據硬體二選一，改 .env 的 OLLAMA_MODEL 對應）：
+docker compose exec ollama ollama pull qwen3.5:35b-a3b  # 高品質（約 20GB，需要 32GB RAM）
+# docker compose exec ollama ollama pull qwen3.5:9b     # 快速（約 5GB，12GB VRAM 可全載入）
 
 # 更新 ollama
 docker pull ollama/ollama:latest
@@ -62,7 +63,7 @@ docker compose down ollama && docker compose up -d ollama
 
 ---
 
-## 🌐 獲取 Webhook URL
+## 獲取 Webhook URL
 
 ### 方法一：使用腳本（推薦）
 
@@ -72,7 +73,7 @@ docker compose down ollama && docker compose up -d ollama
 
 輸出範例：
 ```
-✅ Webhook URL:
+ Webhook URL:
 
   https://xxxxx-xxxxx-1234.trycloudflare.com/webhook
 
@@ -87,7 +88,7 @@ docker logs cloudflared 2>&1 | grep -o 'https://[a-zA-Z0-9-]*\.trycloudflare\.co
 
 **重要：每次重啟 Cloudflare Tunnel，URL 可能會改變！**
 
-### ⚠️ 重要：設定 PUBLIC_BASE_URL（!img 指令必需）
+### 重要：設定 PUBLIC_BASE_URL（!img 指令必需）
 
 如果要使用 `!img` 指令發送圖片，必須設定 `PUBLIC_BASE_URL`：
 
@@ -112,7 +113,7 @@ PUBLIC_BASE_URL=https://xxxxx-xxxxx-1234.trycloudflare.com
 
 ---
 
-## ⚙️ 設定 LINE Webhook
+## 設定 LINE Webhook
 
 1. 前往 [LINE Developers Console](https://developers.line.biz/console/)
 2. 選擇你的頻道 → **Messaging API**
@@ -124,7 +125,7 @@ PUBLIC_BASE_URL=https://xxxxx-xxxxx-1234.trycloudflare.com
 
 ---
 
-## 🧪 測試機器人
+## 測試機器人
 
 ### 基本測試
 
@@ -146,7 +147,7 @@ PUBLIC_BASE_URL=https://xxxxx-xxxxx-1234.trycloudflare.com
 
 ---
 
-## 📝 Bot 指令說明
+## Bot 指令說明
 
 ### 1. !hej [問題]
 
@@ -198,7 +199,7 @@ PUBLIC_BASE_URL=https://xxxxx-xxxxx-1234.trycloudflare.com
 
 ---
 
-## 🛠️ 常用管理指令
+## 常用管理指令
 
 ### 測試系統
 
@@ -283,7 +284,7 @@ docker compose logs -f linebot | grep "Conversation history"
 
 ---
 
-## 🆘 常見問題
+## 常見問題
 
 ### Q1: 機器人沒有回應？
 
@@ -339,8 +340,8 @@ docker compose logs -f linebot | grep "Conversation history"
 # 檢查網路連線
 docker compose exec ollama ping -c 3 google.com
 
-# 重試下載
-docker compose exec ollama ollama pull qwen3.5:9b
+# 重試下載（替換為目前 .env 中設定的模型名稱）
+docker compose exec ollama ollama pull qwen3.5:35b-a3b  # or qwen3.5:9b
 
 # 查看下載進度
 docker compose logs -f ollama
@@ -370,11 +371,12 @@ docker compose exec ollama nvidia-smi
 
 1. **使用更小的模型**：
    ```bash
-   # 在 .env 中修改
-   OLLAMA_MODEL=qwen3.5:9b
+   # 在 .env 中修改（只改這一行即可）
+   OLLAMA_MODEL=qwen3.5:35b-a3b  # 高品質（慢），or OLLAMA_MODEL=qwen3.5:9b 快速（輕量）
 
-   # 重新下載模型
-   docker compose exec ollama ollama pull qwen3.5:9b
+   # 下載對應模型
+   docker compose exec ollama ollama pull qwen3.5:35b-a3b
+   # docker compose exec ollama ollama pull qwen3.5:9b
 
    # 重啟服務
    docker compose restart linebot
@@ -390,8 +392,8 @@ docker compose exec ollama nvidia-smi
 # 列出所有已下載的模型
 docker compose exec ollama ollama list
 
-# 測試模型推理
-docker compose exec ollama ollama run qwen3.5:9b "Hello"
+# 測試模型推理（使用目前 .env 中設定的模型）
+docker compose exec ollama ollama run qwen3.5:35b-a3b "Hello"  # or qwen3.5:9b
 ```
 
 ### Q7: 如何完全重置？
@@ -404,7 +406,7 @@ docker compose down -v
 ./start.sh
 
 # 重新下載模型
-docker compose exec ollama ollama pull qwen3.5:9b
+docker compose exec ollama ollama pull qwen3.5:35b-a3b  # or qwen3.5:9b
 ```
 
 ### Q8: LINE 收到訊息但機器人回覆「Error, try again」？
@@ -418,8 +420,8 @@ docker compose logs -f ollama
 # 查看 LINE Bot 日誌
 docker compose logs -f linebot
 
-# 測試 Ollama 是否正常
-docker compose exec ollama ollama run qwen3.5:9b "測試"
+# 測試 Ollama 是否正常（使用目前 .env 中設定的模型）
+docker compose exec ollama ollama run qwen3.5:35b-a3b "測試"  # or qwen3.5:9b
 ```
 
 ### Q9: !img 指令無法發送圖片？
@@ -461,15 +463,15 @@ docker compose exec ollama ollama run qwen3.5:9b "測試"
 
 ---
 
-## 🎯 進階設定
+## 進階設定
 
 ### 修改 AI 回應行為
 
 編輯 `.env` 文件：
 
 ```bash
-# 修改模型
-OLLAMA_MODEL=qwen3.5:9b
+# 修改模型（只改這一行，其他設定自動適用）
+OLLAMA_MODEL=qwen3.5:35b-a3b  # 高品質（慢）or qwen3.5:9b（快速）
 
 # 修改 Ollama API 端點
 OLLAMA_BASE_URL=http://ollama:11434
@@ -483,7 +485,7 @@ RATE_LIMIT_WINDOW_SECONDS=60    # 時間窗口（秒）
 
 # 修改佇列設定
 QUEUE_MAX_SIZE=10               # 最大佇列大小
-QUEUE_TIMEOUT_SECONDS=120       # 請求超時時間
+QUEUE_TIMEOUT_SECONDS=480       # 完整流程：classify(30) + search(20) + think(300) + sleep(2) + retry(90) = 442s < 480s
 ```
 
 修改後重啟服務：
@@ -569,40 +571,40 @@ ADMIN_ALERT_LEVEL=warning
 
 ---
 
-## 📦 專案結構
+## 專案結構
 
 ```
 AI-linebot/
-├── src/                        # 原始碼
-│   ├── models/                # 資料模型
-│   │   ├── llm_request.py     # LLM 請求模型
-│   │   ├── prompt_config.py   # 提示詞配置
-│   │   ├── image_mapping.py   # 圖片映射
-│   │   └── ...
-│   ├── services/              # 服務層
-│   │   ├── line_service.py    # LINE API 整合
-│   │   ├── ollama_service.py  # Ollama 整合
-│   │   ├── queue_service.py   # 佇列管理
-│   │   └── ...
-│   ├── handlers/              # 指令處理器
-│   │   ├── hej_handler.py     # !hej 指令
-│   │   ├── img_handler.py     # !img 指令
-│   │   └── ...
-│   ├── utils/                 # 工具函數
-│   └── config.py              # 配置管理
-├── main.py                    # 主程式
-├── docker-compose.yml         # Docker 配置
-├── Dockerfile                 # Docker 映像
-├── .env                       # 環境變數
-├── requirements.txt           # Python 依賴
-├── start.sh                   # 啟動腳本
-├── get-url.sh                 # 獲取 URL 腳本
-└── START.md                   # 本文件
+ src/                        # 原始碼
+    models/                # 資料模型
+       llm_request.py     # LLM 請求模型
+       prompt_config.py   # 提示詞配置
+       image_mapping.py   # 圖片映射
+       ...
+    services/              # 服務層
+       line_service.py    # LINE API 整合
+       ollama_service.py  # Ollama 整合
+       queue_service.py   # 佇列管理
+       ...
+    handlers/              # 指令處理器
+       hej_handler.py     # !hej 指令
+       img_handler.py     # !img 指令
+       ...
+    utils/                 # 工具函數
+    config.py              # 配置管理
+ main.py                    # 主程式
+ docker-compose.yml         # Docker 配置
+ Dockerfile                 # Docker 映像
+ .env                       # 環境變數
+ requirements.txt           # Python 依賴
+ start.sh                   # 啟動腳本
+ get-url.sh                 # 獲取 URL 腳本
+ START.md                   # 本文件
 ```
 
 ---
 
-## 📊 系統需求
+## 系統需求
 
 - **作業系統**：Linux / macOS / Windows with WSL2
 - **Docker**：20.10+
@@ -613,27 +615,25 @@ AI-linebot/
 
 ---
 
-## 🎯 當前配置
+## 當前配置
 
-✅ **已配置**：
+ **已配置**：
 - LINE Channel Secret
 - LINE Channel Access Token
-- Ollama qwen3.5:9b 模型
+- Ollama 模型（qwen3.5:35b-a3b 高品質 或 qwen3.5:9b 快速）
 - GPU 支援（RTX 4080）
 - Cloudflare Tunnel（臨時 URL）
 
-⏳ **可選配置**：
+ **可選配置**：
 - Google Drive 同步
 - 管理員通知
 - 永久 Cloudflare Tunnel
 
 ---
 
-## 📚 更多資源
+## 更多資源
 
 - **專案 README**：[README.md](README.md)
-- **設計文件**：[specs/001-line-bot-ollama/](specs/001-line-bot-ollama/)
-- **詳細設定指南**：[docs/setup-guide-zh-TW.md](docs/setup-guide-zh-TW.md)
 - **line 訊息用量**：https://manager.line.biz/account/@033jhxzy/purchase
 - **tavily 搜尋用量**：https://app.tavily.com/home
 

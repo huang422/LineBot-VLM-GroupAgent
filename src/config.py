@@ -41,8 +41,8 @@ class Settings(BaseSettings):
         description="Ollama API base URL"
     )
     ollama_model: str = Field(
-        default="qwen3.5:9b",
-        description="Ollama model name for inference"
+        default="qwen3.5:35b-a3b",
+        description="Ollama model name for inference (e.g., qwen3.5:35b-a3b for quality or qwen3.5:9b for speed)"
     )
     
     # ==========================================================================

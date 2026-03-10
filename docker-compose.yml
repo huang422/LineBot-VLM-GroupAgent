@@ -38,9 +38,14 @@ services:
     environment:
       - NVIDIA_VISIBLE_DEVICES=all
       - NVIDIA_DRIVER_CAPABILITIES=compute,utility
-      # 限制 Ollama 最大 VRAM 使用量（9GB），避免 qwen3.5:9b 佔滿 16GB GPU 記憶體
-      # Ollama 預設會用盡所有 VRAM 做 KV cache，此設定限制總使用量
-      - OLLAMA_MAX_VRAM=9663676416
+      # 限制 Ollama 最大 VRAM 使用量（10GB），剩餘模型 layers 自動 offload 到 RAM
+      # 4080 12GB：10GB 給模型，~2GB 留給 OS/CUDA overhead，避免 OOM
+      # qwen3.5:35b-a3b Q4_K_M ~20GB：約 10GB 進 GPU，10GB 進 RAM (需要 32GB)
+      # qwen3.5:9b       Q4_K_M ~5GB ：全部進 GPU，速度更快（可調低 OLLAMA_MAX_VRAM）
+      # 換模型只需改 .env 的 OLLAMA_MODEL，此 VRAM 設定自動適用任何模型
+      - OLLAMA_MAX_VRAM=10737418240
+      # Flash Attention：減少 KV cache VRAM 用量，讓更多 model layers 進 GPU，加速 decode
+      - OLLAMA_FLASH_ATTENTION=1
     # 使用 nvidia runtime
     runtime: nvidia
     deploy:
