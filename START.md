@@ -41,24 +41,26 @@ docker compose logs --tail=500 linebot | grep -E "(group_id|groupId|Full event s
 docker compose logs linebot | grep -o '"groupId": "[^"]*"' | sort -u
 ```
 
-應該看到三個服務都在運行：
-- `ollama` - AI 模型服務（使用 GPU）
+應該看到兩個服務都在運行：
 - `linebot` - LINE Bot 主服務
 - `cloudflared` - Cloudflare Tunnel
+
+（Ollama 直接跑在 host，不在 Docker 內）
 
 ### 首次使用：下載 AI 模型
 
 ```bash
+# 確保 Ollama 正在執行（host 本機）
+ollama serve   # 若尚未啟動
+
 # 檢查模型是否已下載
-docker compose exec ollama ollama list
+ollama list
 
 # 下載模型（根據硬體二選一，改 .env 的 OLLAMA_MODEL 對應）：
-docker compose exec ollama ollama pull qwen3.5:35b-a3b  # 高品質（約 20GB，需要 32GB RAM）
-# docker compose exec ollama ollama pull qwen3.5:9b     # 快速（約 5GB，12GB VRAM 可全載入）
+ollama pull qwen3.5:35b-a3b  # 高品質（約 20GB，需要 32GB RAM）
+# ollama pull qwen3.5:9b     # 快速（約 5GB，12GB VRAM 可全載入）
 
-# 更新 ollama
-docker pull ollama/ollama:latest
-docker compose down ollama && docker compose up -d ollama
+# 更新 ollama（從 https://ollama.com 下載最新版安裝包）
 ```
 
 ---
@@ -239,8 +241,11 @@ docker compose restart
 
 # 重啟特定服務
 docker compose restart linebot     # 重啟 Bot
-docker compose restart ollama      # 重啟 Ollama
 docker compose restart cloudflared # 重啟 Tunnel
+
+# 重啟 Ollama（host 本機）
+sudo systemctl restart ollama   # systemd
+# 或手動：pkill ollama && ollama serve
 ```
 
 ### 停止服務
@@ -337,14 +342,11 @@ docker compose logs -f linebot | grep "Conversation history"
 ### Q3: Ollama 模型下載失敗或太慢？
 
 ```bash
-# 檢查網路連線
-docker compose exec ollama ping -c 3 google.com
-
 # 重試下載（替換為目前 .env 中設定的模型名稱）
-docker compose exec ollama ollama pull qwen3.5:35b-a3b  # or qwen3.5:9b
+ollama pull qwen3.5:35b-a3b  # or qwen3.5:9b
 
-# 查看下載進度
-docker compose logs -f ollama
+# 查看 Ollama 狀態（systemd）
+sudo journalctl -u ollama -f
 ```
 
 ### Q4: Ollama 推理速度很慢？
@@ -352,11 +354,11 @@ docker compose logs -f ollama
 **檢查 GPU 是否正常工作：**
 
 ```bash
-# 查看 Ollama 是否使用 GPU
-docker compose logs ollama | grep GPU
+# 查看 Ollama 是否使用 GPU（host 本機）
+sudo journalctl -u ollama | grep GPU
 
 # 確認 GPU 可見
-docker compose exec ollama nvidia-smi
+nvidia-smi
 ```
 
 應該看到 RTX 4080 被檢測到。
@@ -375,8 +377,8 @@ docker compose exec ollama nvidia-smi
    OLLAMA_MODEL=qwen3.5:35b-a3b  # 高品質（慢），or OLLAMA_MODEL=qwen3.5:9b 快速（輕量）
 
    # 下載對應模型
-   docker compose exec ollama ollama pull qwen3.5:35b-a3b
-   # docker compose exec ollama ollama pull qwen3.5:9b
+   ollama pull qwen3.5:35b-a3b
+   # ollama pull qwen3.5:9b
 
    # 重啟服務
    docker compose restart linebot
@@ -390,10 +392,10 @@ docker compose exec ollama nvidia-smi
 
 ```bash
 # 列出所有已下載的模型
-docker compose exec ollama ollama list
+ollama list
 
 # 測試模型推理（使用目前 .env 中設定的模型）
-docker compose exec ollama ollama run qwen3.5:35b-a3b "Hello"  # or qwen3.5:9b
+ollama run qwen3.5:35b-a3b "Hello"  # or qwen3.5:9b
 ```
 
 ### Q7: 如何完全重置？
@@ -406,7 +408,7 @@ docker compose down -v
 ./start.sh
 
 # 重新下載模型
-docker compose exec ollama ollama pull qwen3.5:35b-a3b  # or qwen3.5:9b
+ollama pull qwen3.5:35b-a3b  # or qwen3.5:9b
 ```
 
 ### Q8: LINE 收到訊息但機器人回覆「Error, try again」？
@@ -414,14 +416,14 @@ docker compose exec ollama ollama pull qwen3.5:35b-a3b  # or qwen3.5:9b
 這通常表示 Ollama 推理失敗。檢查：
 
 ```bash
-# 查看 Ollama 日誌
-docker compose logs -f ollama
+# 查看 Ollama 日誌（host 本機）
+sudo journalctl -u ollama -f
 
 # 查看 LINE Bot 日誌
 docker compose logs -f linebot
 
 # 測試 Ollama 是否正常（使用目前 .env 中設定的模型）
-docker compose exec ollama ollama run qwen3.5:35b-a3b "測試"  # or qwen3.5:9b
+ollama run qwen3.5:35b-a3b "測試"  # or qwen3.5:9b
 ```
 
 ### Q9: !img 指令無法發送圖片？
@@ -474,7 +476,7 @@ docker compose exec ollama ollama run qwen3.5:35b-a3b "測試"  # or qwen3.5:9b
 OLLAMA_MODEL=qwen3.5:35b-a3b  # 高品質（慢）or qwen3.5:9b（快速）
 
 # 修改 Ollama API 端點
-OLLAMA_BASE_URL=http://ollama:11434
+OLLAMA_BASE_URL=http://localhost:11434
 
 # 修改日誌級別（DEBUG, INFO, WARNING, ERROR）
 LOG_LEVEL=INFO

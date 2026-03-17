@@ -111,15 +111,18 @@ LINE_CHANNEL_ACCESS_TOKEN=your_token_here
 ### 2. Launch
 
 ```bash
-# Start all services (linebot + ollama + cloudflared)
-docker compose up -d
+# Ensure Ollama is running on the host
+sudo systemctl start ollama   # or: ollama serve
 
 # Pull the model — choose one based on your hardware (set OLLAMA_MODEL in .env accordingly)
-docker compose exec ollama ollama pull qwen3.5:35b-a3b  # high quality (~20GB, needs 32GB RAM)
-# docker compose exec ollama ollama pull qwen3.5:9b     # fast (~5GB, fits in 12GB VRAM)
+ollama pull qwen3.5:35b-a3b  # high quality (~20GB, needs 32GB RAM)
+# ollama pull qwen3.5:9b     # fast (~5GB, fits in 12GB VRAM)
+
+# Start Docker services (linebot + cloudflared)
+docker compose up -d
 
 # Get the public webhook URL
-docker compose logs cloudflared | grep trycloudflare.com
+docker logs cloudflared | grep trycloudflare.com
 ```
 
 ### 3. Configure LINE Webhook
@@ -258,7 +261,7 @@ QUEUE_TIMEOUT_SECONDS=480           # Full pipeline: classify(30) + search(20) +
 
 **Optional - Google Drive:**
 ```bash
-GOOGLE_SERVICE_ACCOUNT_FILE=/app/credentials.json
+GOOGLE_SERVICE_ACCOUNT_FILE=./credentials.json
 DRIVE_FOLDER_ID=your_folder_id
 DRIVE_SYNC_INTERVAL_SECONDS=120     # 30-120s range
 ```
@@ -444,9 +447,9 @@ Solution: Single-worker async queue with semaphore-based concurrency control.
 ```
 GPU: NVIDIA RTX 4080 (16GB VRAM)
 
-OLLAMA_MAX_VRAM=10737418240 (10GB limit)
+OLLAMA_MAX_VRAM=10737418240 (10GB limit, set in /etc/systemd/system/ollama.service.d/override.conf)
 
-Without limit:  Ollama uses ALL 12GB → OOM with 35b model
+Without limit:  Ollama uses ALL VRAM → OOM with 35b model
 With 10GB limit: ~10GB model weights on GPU, remaining ~10GB offloaded to RAM
                  ~2GB VRAM reserved for OS/CUDA overhead
 
@@ -548,18 +551,20 @@ curl http://localhost:8000/health | jq
 ### Useful Commands
 
 ```bash
-# View all service logs
+# View all Docker service logs
 docker compose logs -f
 
 # View specific service
 docker compose logs -f linebot
-docker compose logs -f ollama
+
+# View Ollama logs (host service)
+sudo journalctl -u ollama -f
 
 # Check GPU usage
 nvidia-smi
 
 # Check Ollama truncation warnings
-docker compose logs ollama | grep truncat
+sudo journalctl -u ollama | grep truncat
 
 # Monitor conversation context
 docker compose logs -f linebot | grep "Conversation history"

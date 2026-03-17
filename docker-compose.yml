@@ -15,47 +15,16 @@ services:
       - linebot_cache:/tmp/linebot_cache
       # 臨時圖片目錄（用於 !img 指令）
       - linebot_images:/tmp/linebot_images
-    depends_on:
-      - ollama
     networks:
       - linebot-network
+    extra_hosts:
+      # 讓容器可以連到 host 上直接跑的 Ollama
+      - "host.docker.internal:host-gateway"
     environment:
-      # 指向 Docker 內的 Ollama 服務
-      - OLLAMA_BASE_URL=http://ollama:11434
+      # 指向 host 上直接跑的 Ollama（不經過 Docker）
+      - OLLAMA_BASE_URL=http://host.docker.internal:11434
 
-  # Ollama 服務（Docker 容器，使用 GPU）
-  ollama:
-    image: ollama/ollama:latest
-    container_name: ollama
-    restart: unless-stopped
-    ports:
-      - "11434:11434"
-    volumes:
-      - ollama_data:/root/.ollama
-    networks:
-      - linebot-network
-    # GPU 環境變數設定
-    environment:
-      - NVIDIA_VISIBLE_DEVICES=all
-      - NVIDIA_DRIVER_CAPABILITIES=compute,utility
-      # 限制 Ollama 最大 VRAM 使用量（10GB），剩餘模型 layers 自動 offload 到 RAM
-      # 4080 12GB：10GB 給模型，~2GB 留給 OS/CUDA overhead，避免 OOM
-      # qwen3.5:35b-a3b Q4_K_M ~20GB：約 10GB 進 GPU，10GB 進 RAM (需要 32GB)
-      # qwen3.5:9b       Q4_K_M ~5GB ：全部進 GPU，速度更快（可調低 OLLAMA_MAX_VRAM）
-      # 換模型只需改 .env 的 OLLAMA_MODEL，此 VRAM 設定自動適用任何模型
-      - OLLAMA_MAX_VRAM=10737418240
-      # Flash Attention：減少 KV cache VRAM 用量，讓更多 model layers 進 GPU，加速 decode
-      - OLLAMA_FLASH_ATTENTION=1
-    # 使用 nvidia runtime
-    runtime: nvidia
-    deploy:
-      resources:
-        reservations:
-          devices:
-            - driver: nvidia
-              count: 1
-              capabilities: [ gpu ]
-    # Cloudflare Quick Tunnel（臨時 URL，用於測試）
+  # Cloudflare Quick Tunnel（臨時 URL，用於測試）
   cloudflared:
     image: cloudflare/cloudflared:latest
     container_name: cloudflared
@@ -67,8 +36,6 @@ services:
       - linebot-network
 
 volumes:
-  ollama_data:
-    driver: local
   linebot_cache:
     driver: local
   linebot_images:
