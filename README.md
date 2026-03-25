@@ -7,7 +7,7 @@
 [![Google Drive](https://img.shields.io/badge/Google%20Drive-API-4285F4.svg?logo=googledrive&logoColor=white)](https://developers.google.com/drive)
 [![APScheduler](https://img.shields.io/badge/APScheduler-3.10+-orange.svg)](https://apscheduler.readthedocs.io/)
 [![Cloudflare](https://img.shields.io/badge/Cloudflare-Tunnel-F38020.svg?logo=cloudflare&logoColor=white)](https://www.cloudflare.com/)
-[![Buy Me A Coffee](https://img.shields.io/badge/Buy%20Me%20a%20Coffee-ffdd00?style=for-the-badge&logo=buy-me-a-coffee&logoColor=black)](https://www.buymeacoffee.com/huang422)
+[![Buy Me A Coffee](https://img.shields.io/badge/Buy%20Me%20A%20Coffee-Donate-orange.svg?logo=buymeacoffee&logoColor=white)](https://www.buymeacoffee.com/huang422)
 
 A **production-ready LINE group chatbot** powered by local **Ollama reasoning model (qwen3.5:35b-a3b or qwen3.5:9b)**, enabling AI conversations, image analysis, web search, and webpage content extraction without cloud API dependencies. Features reasoning model support with streaming, automatic simplified→traditional Chinese conversion, time-aware responses, guaranteed reply mechanisms and GPU Async Management.
 
